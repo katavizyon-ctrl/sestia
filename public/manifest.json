@@ -1,0 +1,18 @@
+{
+  "name": "Bir Oda, Bir Karar",
+  "short_name": "Bir Karar",
+  "description": "Bir eşyaya karar ver: tut, sat, bağışla, at ya da geri dönüştür — AI önerisiyle.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3ECE2",
+  "theme_color": "#A67C5A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "bir-oda-bir-karar",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "better-sqlite3": "13.0.3",
+    "@anthropic-ai/sdk": "0.127.0"
+  }
+}
