@@ -116,6 +116,14 @@ export function StarIcon(props) {
   );
 }
 
+export function ChevronRightIcon(props) {
+  return (
+    <Svg strokeWidth="2.2" {...props}>
+      <path d="M9 6l6 6-6 6" />
+    </Svg>
+  );
+}
+
 export function CloseIcon(props) {
   return (
     <Svg strokeWidth="2.2" {...props}>

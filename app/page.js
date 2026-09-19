@@ -7,6 +7,7 @@ import {
   CameraIcon,
   GridIcon,
   BackIcon,
+  ChevronRightIcon,
   CheckIcon,
   StarIcon,
   CloseIcon,
@@ -230,13 +231,20 @@ export default function Page() {
         <HomeView
           homeState={homeState}
           homeError={homeError}
-          onScan={() => goTo('scan')}
-          onRoomScan={() => goTo('room-scan')}
+          onScan={() => goTo('scan-select')}
+        />
+      )}
+
+      {view === 'scan-select' && (
+        <ScanSelectView
+          onBack={() => goTo('home')}
+          onChooseSingle={() => goTo('scan')}
+          onChooseRoom={() => goTo('room-scan')}
         />
       )}
 
       {view === 'scan' && (
-        <ScanView title="Eşya Tara" onBack={() => goTo('home')} onFile={handleSingleFile} inputId="photo-input-single" />
+        <ScanView title="Eşya Tara" onBack={() => goTo('scan-select')} onFile={handleSingleFile} inputId="photo-input-single" />
       )}
 
       {view === 'decision' && (
@@ -254,7 +262,7 @@ export default function Page() {
       )}
 
       {view === 'room-scan' && (
-        <RoomScanView onBack={() => goTo('home')} onFile={handleRoomFile} inputId="photo-input-room" />
+        <RoomScanView onBack={() => goTo('scan-select')} onFile={handleRoomFile} inputId="photo-input-room" />
       )}
 
       {view === 'room-review' && (
@@ -282,7 +290,7 @@ export default function Page() {
   );
 }
 
-function HomeView({ homeState, homeError, onScan, onRoomScan }) {
+function HomeView({ homeState, homeError, onScan }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -312,10 +320,6 @@ function HomeView({ homeState, homeError, onScan, onRoomScan }) {
           </button>
         </div>
 
-        <button className="btn-secondary" onClick={onRoomScan}>
-          <GridIcon style={{ width: 16, height: 16 }} /> Oda Taraması (hafta sonu seansı)
-        </button>
-
         <div className="statrow">
           <div className="statchip">
             <div className="statnum">{homeState.points}</div>
@@ -328,6 +332,43 @@ function HomeView({ homeState, homeError, onScan, onRoomScan }) {
         </div>
 
         {homeError && <div className="errbox">{homeError}</div>}
+      </div>
+    </section>
+  );
+}
+
+function ScanSelectView({ onBack, onChooseSingle, onChooseRoom }) {
+  return (
+    <section className="view">
+      <div className="scroll">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Tara</h2>
+        </div>
+
+        <div className="muted">Nasıl taramak istersin?</div>
+
+        <button className="modecard" onClick={onChooseSingle}>
+          <div className="modecard-iconwrap"><CameraIcon style={{ width: 20, height: 20 }} /></div>
+          <div className="modecard-body">
+            <div className="modecard-title">Tek Eşya</div>
+            <div className="modecard-desc">
+              Bir eşyayı fotoğrafla, AI hemen tut/sat/bağışla/at önersin. Günlük görev için ideal · ~1 dakika
+            </div>
+          </div>
+          <ChevronRightIcon style={{ width: 18, height: 18, color: 'var(--text-muted)', flexShrink: 0 }} />
+        </button>
+
+        <button className="modecard" onClick={onChooseRoom}>
+          <div className="modecard-iconwrap"><GridIcon style={{ width: 20, height: 20 }} /></div>
+          <div className="modecard-body">
+            <div className="modecard-title">Oda Taraması</div>
+            <div className="modecard-desc">
+              Bütün bir odanın fotoğrafını çek, AI öne çıkan birden fazla eşyayı birden listelesin. Hafta sonu seansı için
+            </div>
+          </div>
+          <ChevronRightIcon style={{ width: 18, height: 18, color: 'var(--text-muted)', flexShrink: 0 }} />
+        </button>
       </div>
     </section>
   );
