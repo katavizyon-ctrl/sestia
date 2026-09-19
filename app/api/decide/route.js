@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { recordDecisions } from '@/lib/db';
 import { RECOMMENDATIONS } from '@/lib/anthropic';
+import { ROOM_OPTIONS, DEFAULT_ROOM } from '@/lib/constants';
 
 export const runtime = 'nodejs';
 
@@ -20,6 +21,7 @@ export async function POST(req) {
       category: (item.category || 'Genel Eşya').toString().slice(0, 60),
       recommendation: RECOMMENDATIONS.includes(item.recommendation) ? item.recommendation : 'tut',
       reasoning: (item.reasoning || '').toString().slice(0, 300),
+      room: ROOM_OPTIONS.includes(item.room) ? item.room : DEFAULT_ROOM,
     }));
 
     const state = recordDecisions(deviceId, cleanItems, source === 'oda' ? 'oda' : 'tekli');

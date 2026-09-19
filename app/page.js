@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getDeviceId, compressImage } from '@/lib/client';
+import { getDeviceId, compressImage, getLastRoom, setLastRoom } from '@/lib/client';
+import { ROOM_OPTIONS, DEFAULT_ROOM } from '@/lib/constants';
 import {
   FlameIcon,
   CameraIcon,
+  GalleryIcon,
   GridIcon,
   BackIcon,
-  ChevronRightIcon,
   CheckIcon,
   StarIcon,
   CloseIcon,
@@ -30,6 +31,7 @@ export default function Page() {
   const [analysis, setAnalysis] = useState(null);
   const [analyzeError, setAnalyzeError] = useState(null);
   const [selectedRec, setSelectedRec] = useState(null);
+  const [selectedRoom, setSelectedRoom] = useState(null);
   const [confirming, setConfirming] = useState(false);
 
   // ---- oda taraması akışı ----
@@ -73,6 +75,13 @@ export default function Page() {
     setAnalysis(null);
     setAnalyzeError(null);
     setSelectedRec(null);
+    setSelectedRoom(getLastRoom());
+  }
+
+  function chooseRoom(room) {
+    const next = selectedRoom === room ? null : room;
+    setSelectedRoom(next);
+    setLastRoom(next);
   }
 
   async function handleSingleFile(e) {
@@ -115,13 +124,14 @@ export default function Page() {
     setConfirming(true);
     const category = analysis?.category || 'Genel Eşya';
     const reasoning = analysis?.reasoning || '';
+    const room = selectedRoom || DEFAULT_ROOM;
     try {
       const res = await fetch('/api/decide', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           deviceId: deviceIdRef.current,
-          items: [{ category, recommendation: selectedRec, reasoning }],
+          items: [{ category, recommendation: selectedRec, reasoning, room }],
           source: 'tekli',
         }),
       });
@@ -231,20 +241,13 @@ export default function Page() {
         <HomeView
           homeState={homeState}
           homeError={homeError}
-          onScan={() => goTo('scan-select')}
-        />
-      )}
-
-      {view === 'scan-select' && (
-        <ScanSelectView
-          onBack={() => goTo('home')}
-          onChooseSingle={() => goTo('scan')}
-          onChooseRoom={() => goTo('room-scan')}
+          onScanSingle={() => goTo('scan')}
+          onScanRoom={() => goTo('room-scan')}
         />
       )}
 
       {view === 'scan' && (
-        <ScanView title="Eşya Tara" onBack={() => goTo('scan-select')} onFile={handleSingleFile} inputId="photo-input-single" />
+        <ScanView title="Eşya Tara" onBack={() => goTo('home')} onFile={handleSingleFile} />
       )}
 
       {view === 'decision' && (
@@ -255,6 +258,8 @@ export default function Page() {
           analyzeError={analyzeError}
           selectedRec={selectedRec}
           onSelectRec={setSelectedRec}
+          selectedRoom={selectedRoom}
+          onSelectRoom={chooseRoom}
           onBack={() => goTo('scan')}
           onConfirm={confirmSingleDecision}
           confirming={confirming}
@@ -262,7 +267,7 @@ export default function Page() {
       )}
 
       {view === 'room-scan' && (
-        <RoomScanView onBack={() => goTo('scan-select')} onFile={handleRoomFile} inputId="photo-input-room" />
+        <RoomScanView onBack={() => goTo('home')} onFile={handleRoomFile} />
       )}
 
       {view === 'room-review' && (
@@ -290,7 +295,7 @@ export default function Page() {
   );
 }
 
-function HomeView({ homeState, homeError, onScan }) {
+function HomeView({ homeState, homeError, onScanSingle, onScanRoom }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -314,10 +319,18 @@ function HomeView({ homeState, homeError, onScan }) {
             <div className="label">Bugünün Görevi</div>
             <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>Bir eşyaya karar ver</div>
           </div>
-          <div className="muted">Herhangi bir odadan bir eşya seç ve fotoğrafını çek · ~1 dakika</div>
-          <button className="btn-primary" onClick={onScan}>
-            <CameraIcon style={{ width: 18, height: 18 }} /> Başla
-          </button>
+          <div className="modeoptions">
+            <button className="modeoption" onClick={onScanSingle}>
+              <div className="modeoption-iconwrap"><CameraIcon style={{ width: 16, height: 16 }} /></div>
+              <div className="modeoption-title">Tek Eşya</div>
+              <div className="modeoption-desc">Bir eşyaya hızlıca karar ver</div>
+            </button>
+            <button className="modeoption" onClick={onScanRoom}>
+              <div className="modeoption-iconwrap"><GridIcon style={{ width: 16, height: 16 }} /></div>
+              <div className="modeoption-title">Oda Taraması</div>
+              <div className="modeoption-desc">Bir alanı tara, birden fazla eşya bul</div>
+            </button>
+          </div>
         </div>
 
         <div className="statrow">
@@ -337,44 +350,25 @@ function HomeView({ homeState, homeError, onScan }) {
   );
 }
 
-function ScanSelectView({ onBack, onChooseSingle, onChooseRoom }) {
+function CaptureButtons({ onFile, idPrefix }) {
+  const cameraId = `${idPrefix}-camera`;
+  const galleryId = `${idPrefix}-gallery`;
   return (
-    <section className="view">
-      <div className="scroll">
-        <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Tara</h2>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
+      <label className="btn-primary" htmlFor={cameraId} style={{ cursor: 'pointer' }}>
+        <CameraIcon style={{ width: 18, height: 18 }} /> Fotoğraf Çek
+      </label>
+      <input type="file" id={cameraId} accept="image/*" capture="environment" onChange={onFile} />
 
-        <div className="muted">Nasıl taramak istersin?</div>
-
-        <button className="modecard" onClick={onChooseSingle}>
-          <div className="modecard-iconwrap"><CameraIcon style={{ width: 20, height: 20 }} /></div>
-          <div className="modecard-body">
-            <div className="modecard-title">Tek Eşya</div>
-            <div className="modecard-desc">
-              Bir eşyayı fotoğrafla, AI hemen tut/sat/bağışla/at önersin. Günlük görev için ideal · ~1 dakika
-            </div>
-          </div>
-          <ChevronRightIcon style={{ width: 18, height: 18, color: 'var(--text-muted)', flexShrink: 0 }} />
-        </button>
-
-        <button className="modecard" onClick={onChooseRoom}>
-          <div className="modecard-iconwrap"><GridIcon style={{ width: 20, height: 20 }} /></div>
-          <div className="modecard-body">
-            <div className="modecard-title">Oda Taraması</div>
-            <div className="modecard-desc">
-              Bütün bir odanın fotoğrafını çek, AI öne çıkan birden fazla eşyayı birden listelesin. Hafta sonu seansı için
-            </div>
-          </div>
-          <ChevronRightIcon style={{ width: 18, height: 18, color: 'var(--text-muted)', flexShrink: 0 }} />
-        </button>
-      </div>
-    </section>
+      <label className="btn-outline" htmlFor={galleryId} style={{ cursor: 'pointer' }}>
+        <GalleryIcon style={{ width: 18, height: 18 }} /> Galeriden Seç
+      </label>
+      <input type="file" id={galleryId} accept="image/*" onChange={onFile} />
+    </div>
   );
 }
 
-function ScanView({ title, onBack, onFile, inputId }) {
+function ScanView({ title, onBack, onFile }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -388,17 +382,14 @@ function ScanView({ title, onBack, onFile, inputId }) {
           <div className="muted" style={{ maxWidth: 220 }}>
             Bir eşyayı net bir açıdan fotoğrafla, yapay zeka senin için analiz etsin
           </div>
-          <label className="btn-primary" htmlFor={inputId} style={{ cursor: 'pointer' }}>
-            <CameraIcon style={{ width: 18, height: 18 }} /> Fotoğraf Çek / Seç
-          </label>
-          <input type="file" id={inputId} accept="image/*" onChange={onFile} />
+          <CaptureButtons onFile={onFile} idPrefix="photo-single" />
         </div>
       </div>
     </section>
   );
 }
 
-function RoomScanView({ onBack, onFile, inputId }) {
+function RoomScanView({ onBack, onFile }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -413,10 +404,7 @@ function RoomScanView({ onBack, onFile, inputId }) {
             Bütün bir odanın veya köşenin fotoğrafını çek, yapay zeka öne çıkan birden fazla eşyayı tek seferde
             değerlendirsin.
           </div>
-          <label className="btn-primary" htmlFor={inputId} style={{ cursor: 'pointer' }}>
-            <CameraIcon style={{ width: 18, height: 18 }} /> Fotoğraf Çek / Seç
-          </label>
-          <input type="file" id={inputId} accept="image/*" onChange={onFile} />
+          <CaptureButtons onFile={onFile} idPrefix="photo-room" />
         </div>
 
         <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
@@ -427,7 +415,19 @@ function RoomScanView({ onBack, onFile, inputId }) {
   );
 }
 
-function DecisionView({ photoUrl, analyzing, analysis, analyzeError, selectedRec, onSelectRec, onBack, onConfirm, confirming }) {
+function DecisionView({
+  photoUrl,
+  analyzing,
+  analysis,
+  analyzeError,
+  selectedRec,
+  onSelectRec,
+  selectedRoom,
+  onSelectRoom,
+  onBack,
+  onConfirm,
+  confirming,
+}) {
   const meta = selectedRec ? REC_META[selectedRec] : null;
   return (
     <section className="view">
@@ -460,6 +460,23 @@ function DecisionView({ photoUrl, analyzing, analysis, analyzeError, selectedRec
               <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>{meta.title}</div>
             </div>
             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{analysis.reasoning}</div>
+          </div>
+        )}
+
+        {!analyzing && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="label" style={{ color: 'var(--text-muted)' }}>Oda (opsiyonel)</div>
+            <div className="roomchips">
+              {ROOM_OPTIONS.map((room) => (
+                <button
+                  key={room}
+                  className={`roomchip${selectedRoom === room ? ' selected' : ''}`}
+                  onClick={() => onSelectRoom(room)}
+                >
+                  {room}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
