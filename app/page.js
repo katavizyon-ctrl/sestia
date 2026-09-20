@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getDeviceId, compressImage, getLastRoom, setLastRoom } from '@/lib/client';
+import { getDeviceId, compressImage, getLastRoom, setLastRoom, getUserName } from '@/lib/client';
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
@@ -14,6 +14,7 @@ import {
   CheckIcon,
   StarIcon,
   CloseIcon,
+  SendIcon,
   REC_META,
   REC_DONE_LABEL,
 } from '@/components/icons';
@@ -59,10 +60,12 @@ export default function Page() {
   const roomSessionRef = useRef(0);
 
   const [celebration, setCelebration] = useState({ streak: 0, pointsGained: 0, summary: '' });
+  const [userName, setUserNameState] = useState(null);
 
   useEffect(() => {
     const id = getDeviceId();
     deviceIdRef.current = id;
+    setUserNameState(getUserName());
     logEvent(id, 'session_start');
     refreshHomeState(id);
   }, []);
@@ -489,6 +492,7 @@ export default function Page() {
       {view === 'celebration' && (
         <CelebrationView
           celebration={celebration}
+          userName={userName}
           onScanAgain={() => goTo('scan')}
           onHome={() => goTo('home')}
         />
@@ -508,35 +512,16 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom 
           <h1 style={{ fontSize: 28, fontWeight: 600 }}>Sen</h1>
         </div>
 
-        <div className="streakcard">
-          <div className="flamewrap"><FlameIcon style={{ width: 24, height: 24 }} /></div>
-          <div style={{ flexGrow: 1 }}>
-            {homeState.totalDecisions === 0 ? (
-              <>
-                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.03em', opacity: 0.85 }}>1. Gün</div>
-                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 700, lineHeight: 1.15, marginTop: 1 }}>
-                  İstediğini seç!
-                </div>
-                <div style={{ fontSize: 12.5, opacity: 0.9, marginTop: 4, lineHeight: 1.45 }}>
-                  Bir eşya veya bir oda.
-                  <br />
-                  Sen seç, beraber değerlendirelim.
-                  <br />
-                  Nereden başlamak istersin?
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 700, lineHeight: 1.1 }}>
-                  {homeState.streak} gün
-                </div>
-                <div style={{ fontSize: 12.5, opacity: 0.88 }}>Serini bozma, bugün de devam et</div>
-              </>
-            )}
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="flamewrap-compact"><FlameIcon style={{ width: 18, height: 18 }} /></div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 700 }}>
+              {homeState.totalDecisions === 0 ? '1. Gün' : `${homeState.streak} gün`}
+            </div>
           </div>
-        </div>
 
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ borderTop: '1px solid var(--border)' }} />
+
           <div>
             <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>
               {homeMessage?.baslik || 'Bir eşyaya karar ver'}
@@ -703,11 +688,6 @@ function DecisionView({
   onSendChat,
 }) {
   const meta = analysis ? REC_META[analysis.recommendation] : null;
-  const chatHistoryRef = useRef(null);
-  useEffect(() => {
-    const history = chatHistoryRef.current;
-    if (history) history.scrollTop = history.scrollHeight;
-  }, [messages]);
   return (
     <section className="view">
       <div className="scroll">
@@ -720,6 +700,30 @@ function DecisionView({
           {photoUrl && <img src={photoUrl} alt="Taranan eşya" />}
           {analysis && <div className="catbadge">{analysis.category}</div>}
         </div>
+
+        {analysis && (
+          <form onSubmit={onSendChat} className="notefield">
+            <input
+              type="text"
+              value={chatDraft}
+              onChange={(e) => onChatDraft(e.target.value)}
+              placeholder="Eklemek istediğin bir şey var mı? (opsiyonel)"
+              maxLength={500}
+              disabled={chatBusy || confirming || messages.length >= 42}
+            />
+            <button
+              type="submit"
+              className="notefield-submit"
+              aria-label="Gönder"
+              disabled={!chatDraft.trim() || chatBusy || confirming || messages.length >= 42}
+            >
+              <SendIcon style={{ width: 16, height: 16 }} />
+            </button>
+          </form>
+        )}
+        {chatBusy && <div role="status" className="muted" style={{ fontSize: 12 }}>Önerin güncelleniyor...</div>}
+        {chatError && <div role="alert" className="errbox">{chatError}</div>}
+        {messages.length >= 42 && <div className="muted" style={{ fontSize: 12 }}>Not ekleme sınırına ulaştın.</div>}
 
         {analyzing && (
           <div className="thinking">
@@ -740,30 +744,6 @@ function DecisionView({
             </div>
             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{analysis.reasoning}</div>
           </div>
-        )}
-
-        {analysis && (
-          <section className="decision-chat" aria-label="Eşya hakkında sohbet">
-            <div ref={chatHistoryRef} className="chat-history" role="log" aria-live="polite" aria-relevant="additions">
-              {messages.slice(1).map((message, index) => {
-                const reply = message.role === 'assistant' ? JSON.parse(message.content) : null;
-                const text = reply ? (index === 0 ? reply.question : [reply.reasoning, reply.question].filter(Boolean).join(' ')) : message.content;
-                return text ? <p key={index} className={`chat-message chat-${message.role}`}><span className="chat-speaker">{reply ? 'Asistan' : 'Sen'}</span>{text}</p> : null;
-              })}
-            </div>
-            <form onSubmit={onSendChat} className="chat-form">
-              <label htmlFor="item-chat">Eklemek istediğin bir şey var mı?</label>
-              <textarea id="item-chat" rows={2} maxLength={2000} value={chatDraft}
-                onChange={(e) => onChatDraft(e.target.value)} placeholder="İstersen yaz..."
-                disabled={chatBusy || confirming || messages.length >= 42} />
-              <button className="btn-outline" type="submit" disabled={!chatDraft.trim() || chatBusy || confirming || messages.length >= 42}>
-                {chatBusy ? 'Değerlendiriliyor...' : 'Gönder'}
-              </button>
-            </form>
-            {chatBusy && <div role="status" className="muted">Önerin güncelleniyor...</div>}
-            {chatError && <div role="alert" className="errbox">{chatError}</div>}
-            {messages.length >= 42 && <div className="muted">Bu eşya için sohbet sınırına ulaştın. Kararını seçip devam edebilirsin.</div>}
-          </section>
         )}
 
         {!analyzing && (
@@ -924,7 +904,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
   );
 }
 
-function CelebrationView({ celebration, onScanAgain, onHome }) {
+function CelebrationView({ celebration, userName, onScanAgain, onHome }) {
   return (
     <section className="view">
       <div className="scroll center" style={{ paddingTop: 60 }}>
@@ -941,7 +921,7 @@ function CelebrationView({ celebration, onScanAgain, onHome }) {
         >
           <CheckIcon style={{ width: 44, height: 44, color: '#fff' }} />
         </div>
-        <h1 style={{ fontSize: 28, fontWeight: 600, marginTop: 22 }}>Harika iş!</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 600, marginTop: 22 }}>Harika iş{userName ? `, ${userName}` : ''}!</h1>
         <div className="muted" style={{ marginTop: 6 }}>Bugünün görevini tamamladın</div>
 
         <div className="statrow" style={{ marginTop: 22 }}>

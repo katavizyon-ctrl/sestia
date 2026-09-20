@@ -142,6 +142,15 @@ export function FeedbackIcon(props) {
   );
 }
 
+export function SendIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4z" />
+    </Svg>
+  );
+}
+
 export function CloseIcon(props) {
   return (
     <Svg strokeWidth="2.2" {...props}>
