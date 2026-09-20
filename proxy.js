@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/giris', '/api/access', '/admin-giris', '/api/admin-access'];
+const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access'];
 
 export function proxy(req) {
   const { pathname } = req.nextUrl;
@@ -26,7 +26,7 @@ export function proxy(req) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     const url = req.nextUrl.clone();
-    url.pathname = '/giris';
+    url.pathname = '/hosgeldin';
     return NextResponse.redirect(url);
   }
   return NextResponse.next();
