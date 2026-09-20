@@ -2,13 +2,13 @@ import './globals.css';
 import GlobalErrorReporter from '@/components/GlobalErrorReporter';
 
 export const metadata = {
-  title: 'Bir Oda, Bir Karar',
+  title: 'Lyra',
   description: 'Bir eşyaya karar ver: tut, sat, bağışla, at ya da geri dönüştür — AI önerisiyle.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Bir Oda, Bir Karar',
+    title: 'Lyra',
   },
 };
 

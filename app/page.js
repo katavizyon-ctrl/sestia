@@ -15,6 +15,7 @@ import {
   StarIcon,
   CloseIcon,
   SendIcon,
+  ChevronRightIcon,
   REC_META,
   REC_DONE_LABEL,
 } from '@/components/icons';
@@ -28,6 +29,7 @@ export default function Page() {
   const [homeState, setHomeState] = useState({ streak: 0, points: 0, totalDecisions: 0 });
   const [homeMessage, setHomeMessage] = useState(null);
   const [homeError, setHomeError] = useState(null);
+  const [showWelcome, setShowWelcome] = useState(false);
 
   // ---- tekli akış ----
   const [photoUrl, setPhotoUrl] = useState(null);
@@ -67,14 +69,14 @@ export default function Page() {
     deviceIdRef.current = id;
     setUserNameState(getUserName());
     logEvent(id, 'session_start');
-    refreshHomeState(id);
+    refreshHomeState(id, true);
   }, []);
 
   useEffect(() => {
     logEvent(deviceIdRef.current, 'screen_view', { screen: view });
   }, [view]);
 
-  async function refreshHomeState(deviceId) {
+  async function refreshHomeState(deviceId, isInitial) {
     try {
       const res = await fetch(`/api/state?deviceId=${encodeURIComponent(deviceId)}`);
       if (!res.ok) throw new Error('state_failed');
@@ -82,6 +84,7 @@ export default function Page() {
       setHomeState(data);
       setHomeMessage(data.homeMessage || null);
       setHomeError(null);
+      if (isInitial && data.totalDecisions === 0) setShowWelcome(true);
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
     }
@@ -440,13 +443,17 @@ export default function Page() {
   return (
     <div className="app">
       {view === 'home' && (
-        <HomeView
-          homeState={homeState}
-          homeMessage={homeMessage}
-          homeError={homeError}
-          onScanSingle={() => selectMode('tek_esya')}
-          onScanRoom={() => selectMode('oda_tarama')}
-        />
+        showWelcome ? (
+          <WelcomeView onStart={() => setShowWelcome(false)} />
+        ) : (
+          <HomeView
+            homeState={homeState}
+            homeMessage={homeMessage}
+            homeError={homeError}
+            onScanSingle={() => selectMode('tek_esya')}
+            onScanRoom={() => selectMode('oda_tarama')}
+          />
+        )
       )}
 
       {view === 'scan' && (
@@ -517,6 +524,47 @@ export default function Page() {
 
       <FeedbackButton deviceId={deviceIdRef.current} screen={view} />
     </div>
+  );
+}
+
+const WELCOME_STEPS = [
+  { icon: CameraIcon, label: 'Fotoğrafla' },
+  { icon: StarIcon, label: 'Öneriyi Gör' },
+  { icon: CheckIcon, label: 'Karar Ver' },
+];
+
+function WelcomeView({ onStart }) {
+  return (
+    <section className="view">
+      <div className="scroll center" style={{ paddingTop: 56, gap: 28 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+          <img src="/icon.svg" alt="" width={72} height={72} style={{ borderRadius: 18 }} />
+          <h1 style={{ fontSize: 28, fontWeight: 600, textAlign: 'center' }}>Merhaba, ben Lyra.</h1>
+          <div className="muted" style={{ textAlign: 'center', fontSize: 15, lineHeight: 1.6, maxWidth: 280 }}>
+            Evinde nefes alabiliyor musun?<br />
+            Birlikte, adım adım nefes alacak yer açalım.
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {WELCOME_STEPS.map((step, i) => (
+            <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <div className="flamewrap-compact"><step.icon style={{ width: 16, height: 16 }} /></div>
+                <div style={{ fontSize: 11.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap' }}>{step.label}</div>
+              </div>
+              {i < WELCOME_STEPS.length - 1 && (
+                <ChevronRightIcon style={{ width: 14, height: 14, color: 'var(--text-muted)', flexShrink: 0, marginBottom: 16 }} />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: '14px 22px 30px' }}>
+        <button className="btn-primary" onClick={onStart}>Hadi Başlayalım</button>
+      </div>
+    </section>
   );
 }
 

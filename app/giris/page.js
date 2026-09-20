@@ -48,7 +48,7 @@ export default function GirisPage() {
         <div className="scroll" style={{ paddingTop: 36 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <img src="/icon.svg" alt="" width={56} height={56} style={{ borderRadius: 14 }} />
-            <h1 style={{ fontSize: 25, fontWeight: 600, textAlign: 'center' }}>Bir Oda, Bir Karar</h1>
+            <h1 style={{ fontSize: 25, fontWeight: 600, textAlign: 'center' }}>Lyra</h1>
             <div className="muted" style={{ textAlign: 'center', maxWidth: 300, lineHeight: 1.5, fontSize: 13.5 }}>
               Evindeki eşyalara tek tek bakıp karar vermene yardım eden bir uygulama.
               Bir fotoğraf çek, yapay zeka bir öneri sunsun — kararı hep sen verirsin.

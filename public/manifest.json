@@ -1,6 +1,6 @@
 {
-  "name": "Bir Oda, Bir Karar",
-  "short_name": "Bir Karar",
+  "name": "Lyra",
+  "short_name": "Lyra",
   "description": "Bir eşyaya karar ver: tut, sat, bağışla, at ya da geri dönüştür — AI önerisiyle.",
   "start_url": "/",
   "display": "standalone",
