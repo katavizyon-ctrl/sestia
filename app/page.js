@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { getDeviceId, compressImage, getLastRoom, setLastRoom } from '@/lib/client';
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS } from '@/lib/constants';
+import { logEvent } from '@/lib/telemetry';
+import FeedbackButton from '@/components/FeedbackButton';
 import {
   FlameIcon,
   CameraIcon,
@@ -23,6 +25,7 @@ export default function Page() {
   const deviceIdRef = useRef(null);
 
   const [homeState, setHomeState] = useState({ streak: 0, points: 0, totalDecisions: 0 });
+  const [homeMessage, setHomeMessage] = useState(null);
   const [homeError, setHomeError] = useState(null);
 
   // ---- tekli akış ----
@@ -60,8 +63,13 @@ export default function Page() {
   useEffect(() => {
     const id = getDeviceId();
     deviceIdRef.current = id;
+    logEvent(id, 'session_start');
     refreshHomeState(id);
   }, []);
+
+  useEffect(() => {
+    logEvent(deviceIdRef.current, 'screen_view', { screen: view });
+  }, [view]);
 
   async function refreshHomeState(deviceId) {
     try {
@@ -69,6 +77,7 @@ export default function Page() {
       if (!res.ok) throw new Error('state_failed');
       const data = await res.json();
       setHomeState(data);
+      setHomeMessage(data.homeMessage || null);
       setHomeError(null);
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
@@ -79,6 +88,7 @@ export default function Page() {
     if ((view === 'room-scan' || view === 'room-review') && name !== view) resetRoomScan();
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
+    if (name === 'home') refreshHomeState(deviceIdRef.current);
     setView(name);
   }
 
@@ -144,6 +154,7 @@ export default function Page() {
       setAnalysis(result);
       setSelectedRec(result.recommendation);
       setMessages(result.messages);
+      logEvent(deviceIdRef.current, 'ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
     } catch {
       if (session !== singleSessionRef.current || controller.signal.aborted) return;
       setAnalyzeError('Analiz sırasında bir sorun oluştu. Aşağıdan öneriyi elle seçip devam edebilirsin.');
@@ -178,6 +189,7 @@ export default function Page() {
       setSelectedRec(result.recommendation);
       setMessages(result.messages);
       setChatDraft('');
+      logEvent(deviceIdRef.current, 'ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
     } catch {
       if (session !== singleSessionRef.current || controller.signal.aborted) return;
       setChatError('Yanıt alınamadı. Mesajını tekrar gönderebilir veya mevcut kararınla devam edebilirsin.');
@@ -208,6 +220,12 @@ export default function Page() {
       if (!res.ok) throw new Error('decide_failed');
       const state = await res.json();
       setHomeState(state);
+      logEvent(deviceIdRef.current, 'decision_confirmed', {
+        category,
+        recommendation: selectedRec,
+        changedFromSuggestion: !!analysis && analysis.recommendation !== selectedRec,
+        source: 'tekli',
+      });
       setCelebration({
         streak: state.streak,
         pointsGained: 5,
@@ -288,6 +306,9 @@ export default function Page() {
       if (session !== roomSessionRef.current) return;
       setRoomItems(data.items.map((item) => ({ ...item, excluded: false, manual: false })));
       setRoomMessages(data.messages);
+      logEvent(deviceIdRef.current, 'ai_suggestion_shown', {
+        items: data.items.map((item) => ({ category: item.category, recommendation: item.recommendation })),
+      });
     } catch {
       if (session !== roomSessionRef.current || controller.signal.aborted) return;
       setRoomError('Analiz sırasında bir sorun oluştu. Farklı fotoğraflarla tekrar dener misin?');
@@ -371,6 +392,14 @@ export default function Page() {
       if (!res.ok) throw new Error('decide_failed');
       const state = await res.json();
       setHomeState(state);
+      included.forEach((it) => {
+        logEvent(deviceIdRef.current, 'decision_confirmed', {
+          category: it.category,
+          recommendation: it.recommendation,
+          changedFromSuggestion: !!it.manual,
+          source: 'oda',
+        });
+      });
       setCelebration({
         streak: state.streak,
         pointsGained: included.length * 5,
@@ -384,14 +413,20 @@ export default function Page() {
     }
   }
 
+  function selectMode(mode) {
+    logEvent(deviceIdRef.current, 'mode_selected', { mode });
+    goTo(mode === 'tek_esya' ? 'scan' : 'room-scan');
+  }
+
   return (
     <div className="app">
       {view === 'home' && (
         <HomeView
           homeState={homeState}
+          homeMessage={homeMessage}
           homeError={homeError}
-          onScanSingle={() => goTo('scan')}
-          onScanRoom={() => goTo('room-scan')}
+          onScanSingle={() => selectMode('tek_esya')}
+          onScanRoom={() => selectMode('oda_tarama')}
         />
       )}
 
@@ -458,11 +493,13 @@ export default function Page() {
           onHome={() => goTo('home')}
         />
       )}
+
+      <FeedbackButton deviceId={deviceIdRef.current} screen={view} />
     </div>
   );
 }
 
-function HomeView({ homeState, homeError, onScanSingle, onScanRoom }) {
+function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -483,9 +520,16 @@ function HomeView({ homeState, homeError, onScanSingle, onScanRoom }) {
 
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <div className="label">Bugünün Görevi</div>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>Bir eşyaya karar ver</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>
+              {homeMessage?.baslik || 'Bir eşyaya karar ver'}
+            </div>
+            <div className="muted" style={{ marginTop: 4 }}>
+              {homeMessage?.alt_baslik || 'Herhangi bir odadan bir eşya seç ve fotoğrafını çek · ~1 dakika'}
+            </div>
           </div>
+          {homeMessage?.soru?.metin && (
+            <div style={{ fontSize: 13.5, fontWeight: 500 }}>{homeMessage.soru.metin}</div>
+          )}
           <div className="modeoptions">
             <button className="modeoption" onClick={onScanSingle}>
               <div className="modeoption-iconwrap"><CameraIcon style={{ width: 16, height: 16 }} /></div>

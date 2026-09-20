@@ -1,4 +1,5 @@
 import './globals.css';
+import GlobalErrorReporter from '@/components/GlobalErrorReporter';
 
 export const metadata = {
   title: 'Bir Oda, Bir Karar',
@@ -33,7 +34,10 @@ export default function RootLayout({ children }) {
         <link rel="icon" href="/icon.svg" type="image/svg+xml" />
         <link rel="apple-touch-icon" href="/icon.svg" />
       </head>
-      <body>{children}</body>
+      <body>
+        <GlobalErrorReporter />
+        {children}
+      </body>
     </html>
   );
 }

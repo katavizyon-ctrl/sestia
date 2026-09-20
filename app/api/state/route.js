@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getState } from '@/lib/db';
+import { getState, getHomeMessage } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -9,5 +9,7 @@ export async function GET(req) {
   if (!deviceId) {
     return NextResponse.json({ error: 'device_id_required' }, { status: 400 });
   }
-  return NextResponse.json(getState(deviceId));
+  const state = getState(deviceId);
+  const homeMessage = getHomeMessage(deviceId);
+  return NextResponse.json({ ...state, homeMessage });
 }

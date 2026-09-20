@@ -134,6 +134,14 @@ export function ChevronRightIcon(props) {
   );
 }
 
+export function FeedbackIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </Svg>
+  );
+}
+
 export function CloseIcon(props) {
   return (
     <Svg strokeWidth="2.2" {...props}>
