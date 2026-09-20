@@ -511,10 +511,28 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom 
         <div className="streakcard">
           <div className="flamewrap"><FlameIcon style={{ width: 24, height: 24 }} /></div>
           <div style={{ flexGrow: 1 }}>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 700, lineHeight: 1.1 }}>
-              {homeState.streak} gün
-            </div>
-            <div style={{ fontSize: 12.5, opacity: 0.88 }}>Serini bozma, bugün de devam et</div>
+            {homeState.totalDecisions === 0 ? (
+              <>
+                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.03em', opacity: 0.85 }}>1. Gün</div>
+                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 700, lineHeight: 1.15, marginTop: 1 }}>
+                  İstediğini seç!
+                </div>
+                <div style={{ fontSize: 12.5, opacity: 0.9, marginTop: 4, lineHeight: 1.45 }}>
+                  Bir eşya veya bir oda.
+                  <br />
+                  Sen seç, beraber değerlendirelim.
+                  <br />
+                  Nereden başlamak istersin?
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 700, lineHeight: 1.1 }}>
+                  {homeState.streak} gün
+                </div>
+                <div style={{ fontSize: 12.5, opacity: 0.88 }}>Serini bozma, bugün de devam et</div>
+              </>
+            )}
           </div>
         </div>
 
