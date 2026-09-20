@@ -33,6 +33,13 @@ export default function Page() {
   const [selectedRec, setSelectedRec] = useState(null);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [confirming, setConfirming] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatError, setChatError] = useState(null);
+  const singleFileRef = useRef(null);
+  const singleRequestRef = useRef(null);
+  const singleSessionRef = useRef(0);
 
   // ---- oda taraması akışı ----
   const [roomPhotoUrl, setRoomPhotoUrl] = useState(null);
@@ -40,6 +47,13 @@ export default function Page() {
   const [roomError, setRoomError] = useState(null);
   const [roomItems, setRoomItems] = useState([]);
   const [roomConfirming, setRoomConfirming] = useState(false);
+  const [roomMessages, setRoomMessages] = useState([]);
+  const [roomChatDraft, setRoomChatDraft] = useState('');
+  const [roomChatBusy, setRoomChatBusy] = useState(false);
+  const [roomChatError, setRoomChatError] = useState(null);
+  const roomFileRef = useRef(null);
+  const roomRequestRef = useRef(null);
+  const roomSessionRef = useRef(0);
 
   const [celebration, setCelebration] = useState({ streak: 0, pointsGained: 0, summary: '' });
 
@@ -62,6 +76,7 @@ export default function Page() {
   }
 
   function goTo(name) {
+    if (view === 'room-review' && name !== 'room-review') resetRoomScan();
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
     setView(name);
@@ -70,6 +85,15 @@ export default function Page() {
   // ---------------- tekli akış ----------------
 
   function resetSingleScan() {
+    singleSessionRef.current += 1;
+    singleRequestRef.current?.abort();
+    singleRequestRef.current = null;
+    singleFileRef.current = null;
+    setMessages([]);
+    setChatDraft('');
+    setChatBusy(false);
+    setChatError(null);
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
     setPhotoUrl(null);
     setAnalyzing(false);
     setAnalysis(null);
@@ -89,6 +113,8 @@ export default function Page() {
     e.target.value = '';
     if (!file) return;
 
+    resetSingleScan();
+    const session = singleSessionRef.current;
     let compressed;
     try {
       compressed = await compressImage(file);
@@ -96,6 +122,10 @@ export default function Page() {
       compressed = file;
     }
 
+    if (session !== singleSessionRef.current) return;
+    singleFileRef.current = compressed;
+    const controller = new AbortController();
+    singleRequestRef.current = controller;
     setPhotoUrl(URL.createObjectURL(compressed));
     setAnalysis(null);
     setAnalyzeError(null);
@@ -107,20 +137,60 @@ export default function Page() {
       const formData = new FormData();
       formData.append('image', compressed);
       formData.append('mode', 'tekli');
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData, signal: controller.signal });
       if (!res.ok) throw new Error('analyze_failed');
       const result = await res.json();
+      if (session !== singleSessionRef.current) return;
       setAnalysis(result);
       setSelectedRec(result.recommendation);
+      setMessages(result.messages);
     } catch {
+      if (session !== singleSessionRef.current || controller.signal.aborted) return;
       setAnalyzeError('Analiz sırasında bir sorun oluştu. Aşağıdan öneriyi elle seçip devam edebilirsin.');
     } finally {
-      setAnalyzing(false);
+      if (session === singleSessionRef.current) {
+        singleRequestRef.current = null;
+        setAnalyzing(false);
+      }
+    }
+  }
+
+  async function sendChat(e) {
+    e.preventDefault();
+    const content = chatDraft.trim();
+    if (!content || !analysis || confirming || singleRequestRef.current || messages.length >= 42) return;
+    const session = singleSessionRef.current;
+    const controller = new AbortController();
+    singleRequestRef.current = controller;
+    setChatBusy(true);
+    setChatError(null);
+    const nextMessages = [...messages, { role: 'user', content }];
+    try {
+      const formData = new FormData();
+      formData.append('image', singleFileRef.current);
+      formData.append('mode', 'tekli');
+      formData.append('messages', JSON.stringify(nextMessages));
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData, signal: controller.signal });
+      if (!res.ok) throw new Error('chat_failed');
+      const result = await res.json();
+      if (session !== singleSessionRef.current) return;
+      setAnalysis(result);
+      setSelectedRec(result.recommendation);
+      setMessages(result.messages);
+      setChatDraft('');
+    } catch {
+      if (session !== singleSessionRef.current || controller.signal.aborted) return;
+      setChatError('Yanıt alınamadı. Mesajını tekrar gönderebilir veya mevcut kararınla devam edebilirsin.');
+    } finally {
+      if (session === singleSessionRef.current) {
+        singleRequestRef.current = null;
+        setChatBusy(false);
+      }
     }
   }
 
   async function confirmSingleDecision() {
-    if (!selectedRec || confirming) return;
+    if (!selectedRec || confirming || singleRequestRef.current) return;
     setConfirming(true);
     const category = analysis?.category || 'Genel Eşya';
     const reasoning = analysis?.reasoning || '';
@@ -154,6 +224,15 @@ export default function Page() {
   // ---------------- oda taraması akışı ----------------
 
   function resetRoomScan() {
+    roomSessionRef.current += 1;
+    roomRequestRef.current?.abort();
+    roomRequestRef.current = null;
+    roomFileRef.current = null;
+    setRoomMessages([]);
+    setRoomChatDraft('');
+    setRoomChatBusy(false);
+    setRoomChatError(null);
+    if (roomPhotoUrl) URL.revokeObjectURL(roomPhotoUrl);
     setRoomPhotoUrl(null);
     setRoomAnalyzing(false);
     setRoomError(null);
@@ -165,6 +244,8 @@ export default function Page() {
     e.target.value = '';
     if (!file) return;
 
+    resetRoomScan();
+    const session = roomSessionRef.current;
     let compressed;
     try {
       compressed = await compressImage(file, 1600);
@@ -172,6 +253,10 @@ export default function Page() {
       compressed = file;
     }
 
+    if (session !== roomSessionRef.current) return;
+    roomFileRef.current = compressed;
+    const controller = new AbortController();
+    roomRequestRef.current = controller;
     setRoomPhotoUrl(URL.createObjectURL(compressed));
     setRoomItems([]);
     setRoomError(null);
@@ -182,14 +267,63 @@ export default function Page() {
       const formData = new FormData();
       formData.append('image', compressed);
       formData.append('mode', 'oda');
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData, signal: controller.signal });
       if (!res.ok) throw new Error('analyze_failed');
       const data = await res.json();
-      setRoomItems((data.items || []).map((item) => ({ ...item, excluded: false })));
+      if (session !== roomSessionRef.current) return;
+      setRoomItems(data.items.map((item) => ({ ...item, excluded: false, manual: false })));
+      setRoomMessages(data.messages);
     } catch {
+      if (session !== roomSessionRef.current || controller.signal.aborted) return;
       setRoomError('Analiz sırasında bir sorun oluştu. Farklı bir fotoğrafla tekrar dener misin?');
     } finally {
-      setRoomAnalyzing(false);
+      if (session === roomSessionRef.current) {
+        roomRequestRef.current = null;
+        setRoomAnalyzing(false);
+      }
+    }
+  }
+
+  async function sendRoomChat(e) {
+    e.preventDefault();
+    const content = roomChatDraft.trim();
+    if (!content || !roomMessages.length || roomConfirming || roomRequestRef.current || roomMessages.length >= 42) return;
+    const session = roomSessionRef.current;
+    const controller = new AbortController();
+    roomRequestRef.current = controller;
+    setRoomChatBusy(true);
+    setRoomChatError(null);
+    try {
+      const formData = new FormData();
+      formData.append('image', roomFileRef.current);
+      formData.append('mode', 'oda');
+      formData.append('messages', JSON.stringify([...roomMessages, { role: 'user', content }]));
+      formData.append('items', JSON.stringify(roomItems));
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData, signal: controller.signal });
+      if (!res.ok) throw new Error('room_chat_failed');
+      const result = await res.json();
+      if (session !== roomSessionRef.current) return;
+      setRoomItems(current => {
+        const currentIds = new Set(current.map(item => item.id));
+        const merged = current.map(item => {
+          const updated = result.items.find(candidate => candidate.id === item.id);
+          return item.manual || item.excluded || !updated ? item : { ...item, ...updated };
+        });
+        const added = result.items
+          .filter(item => !currentIds.has(item.id))
+          .map(item => ({ ...item, excluded: false, manual: false }));
+        return [...merged, ...added];
+      });
+      setRoomMessages(result.messages);
+      setRoomChatDraft('');
+    } catch {
+      if (session !== roomSessionRef.current || controller.signal.aborted) return;
+      setRoomChatError('Yanıt alınamadı. Mesajını tekrar gönderebilir veya mevcut kararlarınla devam edebilirsin.');
+    } finally {
+      if (session === roomSessionRef.current) {
+        roomRequestRef.current = null;
+        setRoomChatBusy(false);
+      }
     }
   }
 
@@ -198,12 +332,12 @@ export default function Page() {
   }
 
   function setRoomItemRec(index, key) {
-    setRoomItems((items) => items.map((it, i) => (i === index ? { ...it, recommendation: key } : it)));
+    setRoomItems((items) => items.map((it, i) => (i === index ? { ...it, recommendation: key, manual: true } : it)));
   }
 
   async function confirmRoomDecisions() {
     const included = roomItems.filter((it) => !it.excluded);
-    if (included.length === 0 || roomConfirming) return;
+    if (included.length === 0 || roomConfirming || roomRequestRef.current) return;
     setRoomConfirming(true);
     try {
       const res = await fetch('/api/decide', {
@@ -263,6 +397,12 @@ export default function Page() {
           onBack={() => goTo('scan')}
           onConfirm={confirmSingleDecision}
           confirming={confirming}
+          messages={messages}
+          chatDraft={chatDraft}
+          onChatDraft={setChatDraft}
+          chatBusy={chatBusy}
+          chatError={chatError}
+          onSendChat={sendChat}
         />
       )}
 
@@ -281,6 +421,12 @@ export default function Page() {
           onBack={() => goTo('home')}
           onConfirm={confirmRoomDecisions}
           confirming={roomConfirming}
+          messages={roomMessages}
+          chatDraft={roomChatDraft}
+          onChatDraft={setRoomChatDraft}
+          chatBusy={roomChatBusy}
+          chatError={roomChatError}
+          onSendChat={sendRoomChat}
         />
       )}
 
@@ -427,13 +573,24 @@ function DecisionView({
   onBack,
   onConfirm,
   confirming,
+  messages,
+  chatDraft,
+  onChatDraft,
+  chatBusy,
+  chatError,
+  onSendChat,
 }) {
-  const meta = selectedRec ? REC_META[selectedRec] : null;
+  const meta = analysis ? REC_META[analysis.recommendation] : null;
+  const chatHistoryRef = useRef(null);
+  useEffect(() => {
+    const history = chatHistoryRef.current;
+    if (history) history.scrollTop = history.scrollHeight;
+  }, [messages]);
   return (
     <section className="view">
       <div className="scroll">
         <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
+          <button className="iconbtn" onClick={onBack} disabled={confirming} aria-label="Geri"><BackIcon /></button>
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Analiz Sonucu</h2>
         </div>
 
@@ -463,6 +620,30 @@ function DecisionView({
           </div>
         )}
 
+        {analysis && (
+          <section className="decision-chat" aria-label="Eşya hakkında sohbet">
+            <div ref={chatHistoryRef} className="chat-history" role="log" aria-live="polite" aria-relevant="additions">
+              {messages.slice(1).map((message, index) => {
+                const reply = message.role === 'assistant' ? JSON.parse(message.content) : null;
+                const text = reply ? (index === 0 ? reply.question : [reply.reasoning, reply.question].filter(Boolean).join(' ')) : message.content;
+                return text ? <p key={index} className={`chat-message chat-${message.role}`}><span className="chat-speaker">{reply ? 'Asistan' : 'Sen'}</span>{text}</p> : null;
+              })}
+            </div>
+            <form onSubmit={onSendChat} className="chat-form">
+              <label htmlFor="item-chat">Eklemek istediğin bir şey var mı?</label>
+              <textarea id="item-chat" rows={2} maxLength={2000} value={chatDraft}
+                onChange={(e) => onChatDraft(e.target.value)} placeholder="İstersen yaz..."
+                disabled={chatBusy || confirming || messages.length >= 42} />
+              <button className="btn-outline" type="submit" disabled={!chatDraft.trim() || chatBusy || confirming || messages.length >= 42}>
+                {chatBusy ? 'Değerlendiriliyor...' : 'Gönder'}
+              </button>
+            </form>
+            {chatBusy && <div role="status" className="muted">Önerin güncelleniyor...</div>}
+            {chatError && <div role="alert" className="errbox">{chatError}</div>}
+            {messages.length >= 42 && <div className="muted">Bu eşya için sohbet sınırına ulaştın. Kararını seçip devam edebilirsin.</div>}
+          </section>
+        )}
+
         {!analyzing && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div className="label" style={{ color: 'var(--text-muted)' }}>Oda (opsiyonel)</div>
@@ -488,6 +669,7 @@ function DecisionView({
                 key={key}
                 className={`actionbtn${selectedRec === key ? ' selected' : ''}`}
                 data-key={key}
+                disabled={analyzing || chatBusy || confirming}
                 onClick={() => onSelectRec(key)}
               >
                 <m.Icon style={{ width: 18, height: 18 }} />
@@ -498,8 +680,8 @@ function DecisionView({
         </div>
       </div>
 
-      <div style={{ padding: '14px 22px 28px' }}>
-        <button className="btn-primary" disabled={!selectedRec || confirming} onClick={onConfirm}>
+      <div className="decision-footer">
+        <button className="btn-primary" disabled={!selectedRec || confirming || analyzing || chatBusy} onClick={onConfirm}>
           {confirming ? 'Kaydediliyor...' : 'Onayla ve Devam Et'}
         </button>
       </div>
@@ -507,13 +689,19 @@ function DecisionView({
   );
 }
 
-function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming }) {
+function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming,
+  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat }) {
   const includedCount = items.filter((it) => !it.excluded).length;
+  const chatHistoryRef = useRef(null);
+  useEffect(() => {
+    const history = chatHistoryRef.current;
+    if (history) history.scrollTop = history.scrollHeight;
+  }, [messages]);
   return (
     <section className="view">
       <div className="scroll">
         <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
+          <button className="iconbtn" onClick={onBack} disabled={confirming} aria-label="Geri"><BackIcon /></button>
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Analizi</h2>
         </div>
 
@@ -530,6 +718,31 @@ function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, on
 
         {error && <div className="errbox">{error}</div>}
 
+        {!analyzing && messages.length > 0 && (
+          <section className="decision-chat" aria-label="Oda hakkında sohbet">
+            <h3 style={{ fontSize: 17 }}>Oda hakkında konuşalım</h3>
+            <div ref={chatHistoryRef} className="chat-history" role="log" aria-live="polite" aria-relevant="additions">
+              {messages.slice(1).map((message, index) => {
+                const reply = message.role === 'assistant' ? JSON.parse(message.content) : null;
+                const text = reply ? [reply.reply, reply.question].filter(Boolean).join(' ') : message.content;
+                return text ? <p key={index} className={`chat-message chat-${message.role}`}><span className="chat-speaker">{reply ? 'Asistan' : 'Sen'}</span>{text}</p> : null;
+              })}
+            </div>
+            <form onSubmit={onSendChat} className="chat-form">
+              <label htmlFor="room-chat">Oda veya eşyalar hakkında eklemek istediğin bir şey var mı?</label>
+              <textarea id="room-chat" rows={2} maxLength={2000} value={chatDraft}
+                onChange={e => onChatDraft(e.target.value)} placeholder="İstersen yaz..."
+                disabled={chatBusy || confirming || messages.length >= 42} />
+              <button className="btn-outline" type="submit" disabled={!chatDraft.trim() || chatBusy || confirming || messages.length >= 42}>
+                {chatBusy ? 'Değerlendiriliyor...' : 'Gönder'}
+              </button>
+            </form>
+            {chatBusy && <div role="status" className="muted">Odadaki öneriler güncelleniyor...</div>}
+            {chatError && <div role="alert" className="errbox">{chatError}</div>}
+            {messages.length >= 42 && <div className="muted">Bu oda için sohbet sınırına ulaştın. Kararlarını seçip devam edebilirsin.</div>}
+          </section>
+        )}
+
         {!analyzing && items.length > 0 && (
           <div className="muted" style={{ fontSize: 12 }}>
             {items.length} eşya bulundu. İstemediğini kapatabilir, önerisini değiştirebilirsin.
@@ -537,19 +750,20 @@ function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, on
         )}
 
         {items.map((item, index) => (
-          <div key={index} className={`roomcard${item.excluded ? ' excluded' : ''}`}>
+          <div key={item.id} className={`roomcard${item.excluded ? ' excluded' : ''}`}>
             <div className="roomcard-head">
               <div>
                 <div className="roomcard-title">{item.label}</div>
                 <div className="muted">{item.category}</div>
               </div>
-              <button className="iconbtn" style={{ width: 28, height: 28 }} onClick={() => onToggleExclude(index)}>
+              <button className="iconbtn" disabled={chatBusy || confirming} aria-label={item.excluded ? `${item.label} dahil et` : `${item.label} hariç tut`} style={{ width: 28, height: 28 }} onClick={() => onToggleExclude(index)}>
                 <CloseIcon style={{ width: 14, height: 14 }} />
               </button>
             </div>
             {!item.excluded && (
               <>
                 <div className="muted" style={{ fontSize: 12 }}>{item.reasoning}</div>
+                {item.manual && <div className="muted">Senin seçimin: {REC_META[item.recommendation].label}</div>}
                 <div className="roomcard-actions">
                   {ACTION_ORDER.map((key) => {
                     const m = REC_META[key];
@@ -559,6 +773,7 @@ function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, on
                         className={`roomcard-actionbtn${item.recommendation === key ? ' selected' : ''}`}
                         data-key={key}
                         onClick={() => onSetRec(index, key)}
+                        disabled={chatBusy || confirming}
                         title={m.label}
                       >
                         <m.Icon />
@@ -573,8 +788,8 @@ function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, on
       </div>
 
       {!analyzing && items.length > 0 && (
-        <div style={{ padding: '14px 22px 28px' }}>
-          <button className="btn-primary" disabled={includedCount === 0 || confirming} onClick={onConfirm}>
+        <div className="decision-footer">
+          <button className="btn-primary" disabled={includedCount === 0 || confirming || chatBusy} onClick={onConfirm}>
             {confirming ? 'Kaydediliyor...' : `Tümünü Onayla (${includedCount} eşya)`}
           </button>
         </div>

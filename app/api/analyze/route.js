@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { analyzeSingleItem, analyzeRoom } from '@/lib/anthropic';
+import { analyzeSingleItem, analyzeRoom, validSingleMessages, validRoomItems } from '@/lib/anthropic';
 
 export const runtime = 'nodejs';
 
@@ -17,12 +17,28 @@ export async function POST(req) {
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     const mediaType = file.type || 'image/jpeg';
 
-    if (mode === 'oda') {
-      const items = await analyzeRoom(base64, mediaType);
-      return NextResponse.json({ items });
+    let messages = [];
+    try {
+      messages = JSON.parse(formData.get('messages') || '[]');
+    } catch {
+      return NextResponse.json({ error: 'invalid_messages' }, { status: 400 });
     }
-
-    const result = await analyzeSingleItem(base64, mediaType);
+    if (!validSingleMessages(messages, mode === 'oda' ? 12000 : 4000)) {
+      return NextResponse.json({ error: 'invalid_messages' }, { status: 400 });
+    }
+    if (mode === 'oda') {
+      let items = [];
+      try {
+        items = JSON.parse(formData.get('items') || '[]');
+      } catch {
+        return NextResponse.json({ error: 'invalid_items' }, { status: 400 });
+      }
+      if (messages.length && !validRoomItems(items)) {
+        return NextResponse.json({ error: 'invalid_items' }, { status: 400 });
+      }
+      return NextResponse.json(await analyzeRoom(base64, mediaType, messages, items));
+    }
+    const result = await analyzeSingleItem(base64, mediaType, messages);
     return NextResponse.json(result);
   } catch (err) {
     console.error('analyze_failed', err);

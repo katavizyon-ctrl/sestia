@@ -391,3 +391,15 @@ input[type=file] { display: none; }
 .roomcard-actionbtn.selected[data-key="at"] { background: var(--stone); }
 .roomcard-actionbtn.selected[data-key="geri_donustur"] { background: var(--recycle); }
 .roomcard-actionbtn svg { width: 16px; height: 16px; }
+
+.decision-chat { border-top: 1px solid var(--border); padding-top: 16px; display: grid; gap: 10px; min-width: 0; }
+.chat-history { max-height: 220px; overflow-y: auto; display: grid; gap: 10px; }
+.chat-message { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-user { background: var(--surface-alt); padding: 8px 10px; border-radius: 8px; }
+.chat-speaker { display: block; font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 3px; }
+.chat-form { display: grid; gap: 8px; }
+.chat-form label { font-size: 13px; font-weight: 600; }
+.chat-form textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 70px; max-height: 180px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px; font: inherit; font-size: 16px; }
+.chat-form textarea:focus-visible { outline: 2px solid var(--eucalyptus); outline-offset: 2px; }
+.chat-form button:disabled, .actionbtn:disabled { opacity: .55; cursor: default; }
+.decision-footer { position: sticky; bottom: 0; z-index: 2; background: var(--bg); border-top: 1px solid var(--border); padding: 12px 22px max(16px, env(safe-area-inset-bottom, 0px)); }
