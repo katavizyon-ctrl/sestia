@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getDeviceId, compressImage, getLastRoom, setLastRoom, getUserName } from '@/lib/client';
-import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS } from '@/lib/constants';
+import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
 import {
@@ -128,6 +128,14 @@ export default function Page() {
 
     resetSingleScan();
     const session = singleSessionRef.current;
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setPhotoUrl(URL.createObjectURL(file));
+      setView('decision');
+      setAnalyzeError('Bu fotoğraf çok büyük (20 MB üstü). Daha küçük bir fotoğraf seçip tekrar dener misin?');
+      return;
+    }
+
     let compressed;
     try {
       compressed = await compressImage(file);
@@ -267,8 +275,11 @@ export default function Page() {
     e.target.value = '';
     if (!files.length) return;
 
+    const withinSize = files.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+    const oversizedCount = files.length - withinSize.length;
+
     const remaining = Math.max(0, MAX_ROOM_PHOTOS - roomPhotos.length);
-    const accepted = files.slice(0, remaining);
+    const accepted = withinSize.slice(0, remaining);
     const compressedFiles = await Promise.all(
       accepted.map((file) => compressImage(file, 1600).catch(() => file))
     );
@@ -276,6 +287,11 @@ export default function Page() {
       ...current,
       ...compressedFiles.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) })),
     ]);
+    setRoomError(
+      oversizedCount > 0
+        ? `${oversizedCount} fotoğraf çok büyük olduğu için eklenemedi (20 MB sınırı).`
+        : null
+    );
   }
 
   function removeRoomPhoto(id) {
@@ -466,6 +482,7 @@ export default function Page() {
           onAddFiles={addRoomPhotos}
           onRemovePhoto={removeRoomPhoto}
           onAnalyze={startRoomAnalysis}
+          error={roomError}
         />
       )}
 
@@ -603,7 +620,7 @@ function ScanView({ title, onBack, onFile }) {
   );
 }
 
-function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze }) {
+function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze, error }) {
   const canAddMore = photos.length < MAX_ROOM_PHOTOS;
   return (
     <section className="view">
@@ -612,6 +629,8 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze }) 
           <button className="iconbtn" onClick={onBack}><BackIcon /></button>
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Taraması</h2>
         </div>
+
+        {error && <div className="errbox">{error}</div>}
 
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' }}>
