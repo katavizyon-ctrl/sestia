@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getDeviceId, compressImage, getLastRoom, setLastRoom } from '@/lib/client';
-import { ROOM_OPTIONS, DEFAULT_ROOM } from '@/lib/constants';
+import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS } from '@/lib/constants';
 import {
   FlameIcon,
   CameraIcon,
@@ -42,7 +42,7 @@ export default function Page() {
   const singleSessionRef = useRef(0);
 
   // ---- oda taraması akışı ----
-  const [roomPhotoUrl, setRoomPhotoUrl] = useState(null);
+  const [roomPhotos, setRoomPhotos] = useState([]); // [{id, file, url}] - analizden önce toplanan fotoğraflar
   const [roomAnalyzing, setRoomAnalyzing] = useState(false);
   const [roomError, setRoomError] = useState(null);
   const [roomItems, setRoomItems] = useState([]);
@@ -51,7 +51,7 @@ export default function Page() {
   const [roomChatDraft, setRoomChatDraft] = useState('');
   const [roomChatBusy, setRoomChatBusy] = useState(false);
   const [roomChatError, setRoomChatError] = useState(null);
-  const roomFileRef = useRef(null);
+  const roomFilesRef = useRef([]);
   const roomRequestRef = useRef(null);
   const roomSessionRef = useRef(0);
 
@@ -76,7 +76,7 @@ export default function Page() {
   }
 
   function goTo(name) {
-    if (view === 'room-review' && name !== 'room-review') resetRoomScan();
+    if ((view === 'room-scan' || view === 'room-review') && name !== view) resetRoomScan();
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
     setView(name);
@@ -227,45 +227,60 @@ export default function Page() {
     roomSessionRef.current += 1;
     roomRequestRef.current?.abort();
     roomRequestRef.current = null;
-    roomFileRef.current = null;
+    roomFilesRef.current = [];
     setRoomMessages([]);
     setRoomChatDraft('');
     setRoomChatBusy(false);
     setRoomChatError(null);
-    if (roomPhotoUrl) URL.revokeObjectURL(roomPhotoUrl);
-    setRoomPhotoUrl(null);
+    setRoomPhotos((current) => {
+      current.forEach((p) => URL.revokeObjectURL(p.url));
+      return [];
+    });
     setRoomAnalyzing(false);
     setRoomError(null);
     setRoomItems([]);
   }
 
-  async function handleRoomFile(e) {
-    const file = e.target.files && e.target.files[0];
+  async function addRoomPhotos(e) {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
 
-    resetRoomScan();
+    const remaining = Math.max(0, MAX_ROOM_PHOTOS - roomPhotos.length);
+    const accepted = files.slice(0, remaining);
+    const compressedFiles = await Promise.all(
+      accepted.map((file) => compressImage(file, 1600).catch(() => file))
+    );
+    setRoomPhotos((current) => [
+      ...current,
+      ...compressedFiles.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) })),
+    ]);
+  }
+
+  function removeRoomPhoto(id) {
+    setRoomPhotos((current) => {
+      const target = current.find((p) => p.id === id);
+      if (target) URL.revokeObjectURL(target.url);
+      return current.filter((p) => p.id !== id);
+    });
+  }
+
+  async function startRoomAnalysis() {
+    if (roomPhotos.length === 0) return;
+    roomSessionRef.current += 1;
     const session = roomSessionRef.current;
-    let compressed;
-    try {
-      compressed = await compressImage(file, 1600);
-    } catch {
-      compressed = file;
-    }
-
-    if (session !== roomSessionRef.current) return;
-    roomFileRef.current = compressed;
+    roomFilesRef.current = roomPhotos.map((p) => p.file);
     const controller = new AbortController();
     roomRequestRef.current = controller;
-    setRoomPhotoUrl(URL.createObjectURL(compressed));
     setRoomItems([]);
+    setRoomMessages([]);
     setRoomError(null);
     setView('room-review');
     setRoomAnalyzing(true);
 
     try {
       const formData = new FormData();
-      formData.append('image', compressed);
+      roomFilesRef.current.forEach((file) => formData.append('image', file));
       formData.append('mode', 'oda');
       const res = await fetch('/api/analyze', { method: 'POST', body: formData, signal: controller.signal });
       if (!res.ok) throw new Error('analyze_failed');
@@ -275,7 +290,7 @@ export default function Page() {
       setRoomMessages(data.messages);
     } catch {
       if (session !== roomSessionRef.current || controller.signal.aborted) return;
-      setRoomError('Analiz sırasında bir sorun oluştu. Farklı bir fotoğrafla tekrar dener misin?');
+      setRoomError('Analiz sırasında bir sorun oluştu. Farklı fotoğraflarla tekrar dener misin?');
     } finally {
       if (session === roomSessionRef.current) {
         roomRequestRef.current = null;
@@ -295,7 +310,7 @@ export default function Page() {
     setRoomChatError(null);
     try {
       const formData = new FormData();
-      formData.append('image', roomFileRef.current);
+      roomFilesRef.current.forEach((file) => formData.append('image', file));
       formData.append('mode', 'oda');
       formData.append('messages', JSON.stringify([...roomMessages, { role: 'user', content }]));
       formData.append('items', JSON.stringify(roomItems));
@@ -407,12 +422,18 @@ export default function Page() {
       )}
 
       {view === 'room-scan' && (
-        <RoomScanView onBack={() => goTo('home')} onFile={handleRoomFile} />
+        <RoomScanView
+          onBack={() => goTo('home')}
+          photos={roomPhotos}
+          onAddFiles={addRoomPhotos}
+          onRemovePhoto={removeRoomPhoto}
+          onAnalyze={startRoomAnalysis}
+        />
       )}
 
       {view === 'room-review' && (
         <RoomReviewView
-          photoUrl={roomPhotoUrl}
+          photos={roomPhotos}
           analyzing={roomAnalyzing}
           error={roomError}
           items={roomItems}
@@ -496,20 +517,20 @@ function HomeView({ homeState, homeError, onScanSingle, onScanRoom }) {
   );
 }
 
-function CaptureButtons({ onFile, idPrefix }) {
+function CaptureButtons({ onFile, idPrefix, multiple, cameraLabel = 'Fotoğraf Çek', galleryLabel = 'Galeriden Seç' }) {
   const cameraId = `${idPrefix}-camera`;
   const galleryId = `${idPrefix}-gallery`;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
       <label className="btn-primary" htmlFor={cameraId} style={{ cursor: 'pointer' }}>
-        <CameraIcon style={{ width: 18, height: 18 }} /> Fotoğraf Çek
+        <CameraIcon style={{ width: 18, height: 18 }} /> {cameraLabel}
       </label>
       <input type="file" id={cameraId} accept="image/*" capture="environment" onChange={onFile} />
 
       <label className="btn-outline" htmlFor={galleryId} style={{ cursor: 'pointer' }}>
-        <GalleryIcon style={{ width: 18, height: 18 }} /> Galeriden Seç
+        <GalleryIcon style={{ width: 18, height: 18 }} /> {galleryLabel}
       </label>
-      <input type="file" id={galleryId} accept="image/*" onChange={onFile} />
+      <input type="file" id={galleryId} accept="image/*" multiple={multiple} onChange={onFile} />
     </div>
   );
 }
@@ -535,7 +556,8 @@ function ScanView({ title, onBack, onFile }) {
   );
 }
 
-function RoomScanView({ onBack, onFile }) {
+function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze }) {
+  const canAddMore = photos.length < MAX_ROOM_PHOTOS;
   return (
     <section className="view">
       <div className="scroll">
@@ -544,19 +566,57 @@ function RoomScanView({ onBack, onFile }) {
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Taraması</h2>
         </div>
 
-        <div className="card center" style={{ flexGrow: 1, minHeight: 260, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <GridIcon style={{ width: 40, height: 40, color: 'var(--text-muted)' }} strokeWidth="1.6" />
-          <div className="muted" style={{ maxWidth: 260 }}>
-            Bütün bir odanın veya köşenin fotoğrafını çek, yapay zeka öne çıkan birden fazla eşyayı tek seferde
-            değerlendirsin.
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' }}>
+            <GridIcon style={{ width: 36, height: 36, color: 'var(--text-muted)' }} strokeWidth="1.6" />
+            <div className="muted" style={{ maxWidth: 280 }}>
+              Aynı odanın veya köşenin 1-{MAX_ROOM_PHOTOS} fotoğrafını ekle (farklı açılardan çekebilirsin),
+              yapay zeka hepsini birlikte değerlendirip öne çıkan eşyaları tek seferde listelesin.
+            </div>
           </div>
-          <CaptureButtons onFile={onFile} idPrefix="photo-room" />
+
+          {photos.length > 0 && (
+            <div className="photogrid">
+              {photos.map((photo) => (
+                <div key={photo.id} className="photothumb">
+                  <img src={photo.url} alt="" />
+                  <button
+                    className="photothumb-remove"
+                    aria-label="Fotoğrafı kaldır"
+                    onClick={() => onRemovePhoto(photo.id)}
+                  >
+                    <CloseIcon style={{ width: 12, height: 12 }} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {canAddMore ? (
+            <CaptureButtons
+              onFile={onAddFiles}
+              idPrefix="photo-room"
+              multiple
+              cameraLabel={photos.length ? 'Bir Fotoğraf Daha Çek' : 'Fotoğraf Çek'}
+              galleryLabel={photos.length ? 'Galeriden Daha Fazla Ekle' : 'Galeriden Seç'}
+            />
+          ) : (
+            <div className="muted" style={{ textAlign: 'center' }}>En fazla {MAX_ROOM_PHOTOS} fotoğraf ekleyebilirsin.</div>
+          )}
         </div>
 
         <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
           AI'ın öne çıkan gördüğü eşyalar listelenir — sonra listeyi düzenleyebilirsin.
         </div>
       </div>
+
+      {photos.length > 0 && (
+        <div className="decision-footer">
+          <button className="btn-primary" onClick={onAnalyze}>
+            Analiz Et ({photos.length} fotoğraf)
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -689,7 +749,7 @@ function DecisionView({
   );
 }
 
-function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming,
+function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming,
   messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat }) {
   const includedCount = items.filter((it) => !it.excluded).length;
   const chatHistoryRef = useRef(null);
@@ -705,14 +765,18 @@ function RoomReviewView({ photoUrl, analyzing, error, items, onToggleExclude, on
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Analizi</h2>
         </div>
 
-        <div className="photowrap" style={{ height: 140 }}>
-          {photoUrl && <img src={photoUrl} alt="Taranan oda" />}
+        <div className="photostrip">
+          {photos.map((photo) => (
+            <div key={photo.id} className="photothumb photothumb-static">
+              <img src={photo.url} alt="Taranan oda" />
+            </div>
+          ))}
         </div>
 
         {analyzing && (
           <div className="thinking">
             <div className="spinner" />
-            <div>Yapay zeka odayı inceliyor...</div>
+            <div>Yapay zeka {photos.length > 1 ? 'fotoğrafları' : 'odayı'} inceliyor...</div>
           </div>
         )}
 

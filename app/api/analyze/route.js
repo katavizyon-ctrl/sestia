@@ -1,21 +1,18 @@
 import { NextResponse } from 'next/server';
 import { analyzeSingleItem, analyzeRoom, validSingleMessages, validRoomItems } from '@/lib/anthropic';
+import { MAX_ROOM_PHOTOS } from '@/lib/constants';
 
 export const runtime = 'nodejs';
+
+async function toImagePayload(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  return { base64: Buffer.from(arrayBuffer).toString('base64'), mediaType: file.type || 'image/jpeg' };
+}
 
 export async function POST(req) {
   try {
     const formData = await req.formData();
-    const file = formData.get('image');
     const mode = formData.get('mode') === 'oda' ? 'oda' : 'tekli';
-
-    if (!file || typeof file === 'string') {
-      return NextResponse.json({ error: 'image_required' }, { status: 400 });
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
-    const mediaType = file.type || 'image/jpeg';
 
     let messages = [];
     try {
@@ -26,7 +23,12 @@ export async function POST(req) {
     if (!validSingleMessages(messages, mode === 'oda' ? 12000 : 4000)) {
       return NextResponse.json({ error: 'invalid_messages' }, { status: 400 });
     }
+
     if (mode === 'oda') {
+      const files = formData.getAll('image').filter((f) => f && typeof f !== 'string');
+      if (files.length === 0 || files.length > MAX_ROOM_PHOTOS) {
+        return NextResponse.json({ error: 'image_required' }, { status: 400 });
+      }
       let items = [];
       try {
         items = JSON.parse(formData.get('items') || '[]');
@@ -36,8 +38,15 @@ export async function POST(req) {
       if (messages.length && !validRoomItems(items)) {
         return NextResponse.json({ error: 'invalid_items' }, { status: 400 });
       }
-      return NextResponse.json(await analyzeRoom(base64, mediaType, messages, items));
+      const images = await Promise.all(files.map(toImagePayload));
+      return NextResponse.json(await analyzeRoom(images, messages, items));
     }
+
+    const file = formData.get('image');
+    if (!file || typeof file === 'string') {
+      return NextResponse.json({ error: 'image_required' }, { status: 400 });
+    }
+    const { base64, mediaType } = await toImagePayload(file);
     const result = await analyzeSingleItem(base64, mediaType, messages);
     return NextResponse.json(result);
   } catch (err) {
