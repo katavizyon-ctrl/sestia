@@ -1,14 +1,15 @@
 import './globals.css';
 import GlobalErrorReporter from '@/components/GlobalErrorReporter';
+import { ASSISTANT_NAME } from '@/lib/constants';
 
 export const metadata = {
-  title: 'Lyra',
+  title: ASSISTANT_NAME,
   description: 'Bir eşyaya karar ver: tut, sat, bağışla, at ya da geri dönüştür — AI önerisiyle.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Lyra',
+    title: ASSISTANT_NAME,
   },
 };
 

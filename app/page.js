@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { compressImage, getLastRoom, setLastRoom, getUserName } from '@/lib/client';
-import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES } from '@/lib/constants';
+import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES, ASSISTANT_NAME } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
 import {
@@ -713,7 +713,7 @@ function WelcomeView({ onStart }) {
       <div className="scroll center" style={{ paddingTop: 56, gap: 28 }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
           <img src="/icon.svg" alt="" width={72} height={72} style={{ borderRadius: 18 }} />
-          <h1 style={{ fontSize: 28, fontWeight: 600, textAlign: 'center' }}>Merhaba, ben Lyra.</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 600, textAlign: 'center' }}>Merhaba, ben {ASSISTANT_NAME}.</h1>
           <div className="muted" style={{ textAlign: 'center', fontSize: 15, lineHeight: 1.6, maxWidth: 280 }}>
             Evinde nefes alabiliyor musun?<br />
             Birlikte, adım adım nefes alacak yer açalım.
