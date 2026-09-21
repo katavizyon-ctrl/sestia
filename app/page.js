@@ -281,22 +281,36 @@ export default function Page() {
   // parametre olarak gelir (bkz. addRoomPhotos). Sunucunun atadigi kalici
   // photo id'sini ilgili roomPhotos girdisine geri yaziyoruz — bu id,
   // analizin HANGI fotograflara dayandigini kalici kayda baglamak icin
-  // gerekiyor (bkz. persistRoomScanIfActive).
+  // gerekiyor (bkz. persistRoomScanIfActive). Her fotograf BAGIMSIZ
+  // yukleniyor — biri basarisiz olursa digerlerini engellemez, sadece o
+  // girdi uploadFailed=true ile isaretlenir (bkz. retryFailedRoomPhotos,
+  // startRoomAnalysis'teki "hepsi kaydedildi mi" kontrolu).
   async function persistNewRoomScanPhotos(entries) {
     const roomId = activeRoomRef.current?.id;
     if (!roomId || entries.length === 0) return;
-    try {
-      for (const entry of entries) {
+    for (const entry of entries) {
+      try {
         const fd = new FormData();
         fd.append('photo', entry.file, 'photo.jpg');
         const res = await fetch(`/api/rooms/${roomId}/photos`, { method: 'POST', body: fd });
         if (!res.ok) throw new Error('persist_failed');
         const saved = await res.json();
-        setRoomPhotos((current) => current.map((p) => (p.id === entry.id ? { ...p, photoId: saved.id } : p)));
+        setRoomPhotos((current) => current.map((p) => (p.id === entry.id ? { ...p, photoId: saved.id, uploadFailed: false } : p)));
+      } catch {
+        setRoomPhotos((current) => current.map((p) => (p.id === entry.id ? { ...p, uploadFailed: true } : p)));
+        setRoomError('Bazı fotoğraflar odaya kaydedilemedi. Aşağıdan tekrar deneyebilirsin.');
       }
-    } catch {
-      setRoomError('Bazı fotoğraflar odaya kaydedilemedi. Bağlantını kontrol edip tekrar dener misin?');
     }
+  }
+
+  // Sadece kaydedilemeyen fotograflari (uploadFailed) tekrar dener —
+  // basariyla kaydedilmis olanlari yeniden yuklemez.
+  function retryFailedRoomPhotos() {
+    const failed = roomPhotos.filter((p) => p.uploadFailed);
+    if (failed.length === 0) return;
+    setRoomPhotos((current) => current.map((p) => (p.uploadFailed ? { ...p, uploadFailed: false } : p)));
+    setRoomError(null);
+    persistNewRoomScanPhotos(failed);
   }
 
   // Tamamlanan analizi (esya listesi + sohbet gecmisi + dayandigi
@@ -647,6 +661,19 @@ export default function Page() {
   async function startRoomAnalysis(photosOverride) {
     const photos = photosOverride || roomPhotos;
     if (photos.length === 0) return;
+    // Butun fotograflar sunucuya kaydedilmeden analiz BASLAMAZ — aksi
+    // halde kalici room_analyses.photo_ids_json eksik/yanlis fotograflarla
+    // yazilabilir. CANLI roomPhotos durumuna bakiyoruz (photosOverride,
+    // checkRoomPhotoCoverage'dan gelen anlik bir kopya oldugu icin yukleme
+    // ilerlemesini yansitmaz).
+    if (roomPhotos.some((p) => !p.photoId && !p.uploadFailed)) {
+      setRoomError('Fotoğraflar hâlâ kaydediliyor, birazdan tekrar dener misin?');
+      return;
+    }
+    if (roomPhotos.some((p) => p.uploadFailed)) {
+      setRoomError('Bazı fotoğraflar kaydedilemedi. Aşağıdan tekrar deneyip devam edebilirsin.');
+      return;
+    }
     roomSessionRef.current += 1;
     const session = roomSessionRef.current;
     roomFilesRef.current = photos.map((p) => p.file);
@@ -772,8 +799,15 @@ export default function Page() {
       });
       // Fotograflar zaten eklendikce kaydedilmisti (bkz. persistNewRoomScanPhotos).
       // Karar verildigine gore bekleyen tarama artik gereksiz — temizle.
+      // roomItems (hariç tutma/oneri degisiklikleri dahil NIHAI durum)
+      // finalItems olarak gonderilir — sunucu bunu Sestia'nin orijinal
+      // degerlendirmesinden AYRI olarak kalici analize yazar.
       if (activeRoomRef.current?.id) {
-        fetch(`/api/rooms/${activeRoomRef.current.id}/scan`, { method: 'DELETE' }).catch(() => {});
+        fetch(`/api/rooms/${activeRoomRef.current.id}/scan`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finalItems: roomItems }),
+        }).catch(() => {});
       }
       setCelebration({
         streak: state.streak,
@@ -845,6 +879,7 @@ export default function Page() {
           error={null}
           items={historyAnalysis.items}
           messages={historyAnalysis.messages}
+          finalItems={historyAnalysis.finalItems}
           onBack={() => { setHistoryAnalysis(null); setView('room-detail'); }}
           readOnly
         />
@@ -896,6 +931,9 @@ export default function Page() {
           coverageChecking={roomCoverageChecking}
           coverageResult={roomCoverageResult}
           onContinueAnyway={() => startRoomAnalysis()}
+          photosUploading={roomPhotos.some((p) => !p.photoId && !p.uploadFailed)}
+          photosUploadFailed={roomPhotos.some((p) => p.uploadFailed)}
+          onRetryUploads={retryFailedRoomPhotos}
         />
       )}
 
@@ -1130,7 +1168,7 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom,
 
           <div>
             <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>
-              {homeMessage?.baslik || 'Bir eşyaya karar ver'}
+              {homeMessage?.baslik || 'Nereden başlamak istersin?'}
             </div>
             <div className="muted" style={{ marginTop: 4 }}>
               {homeMessage?.alt_baslik || 'Herhangi bir odadan bir eşya seç ve fotoğrafını çek · ~1 dakika'}
@@ -1143,12 +1181,12 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom,
             <button className="modeoption" onClick={onScanSingle}>
               <div className="modeoption-iconwrap"><CameraIcon style={{ width: 16, height: 16 }} /></div>
               <div className="modeoption-title">Tek Eşya</div>
-              <div className="modeoption-desc">Bir eşyaya hızlıca karar ver</div>
+              <div className="modeoption-desc">Bir eşyayı birlikte değerlendirelim.</div>
             </button>
             <button className="modeoption" onClick={onScanRoom}>
               <div className="modeoption-iconwrap"><GridIcon style={{ width: 16, height: 16 }} /></div>
               <div className="modeoption-title">Oda Taraması</div>
-              <div className="modeoption-desc">Bir alanı tara, birden fazla eşya bul</div>
+              <div className="modeoption-desc">Yaşam alanına birlikte bakalım.</div>
             </button>
           </div>
         </div>
@@ -1450,7 +1488,8 @@ function ScanView({ title, onBack, onFile }) {
   );
 }
 
-function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, coverageChecking, coverageResult, onContinueAnyway }) {
+function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, coverageChecking, coverageResult, onContinueAnyway,
+  photosUploading, photosUploadFailed, onRetryUploads }) {
   const canAddMore = photos.length < MAX_ROOM_PHOTOS;
   return (
     <section className="view">
@@ -1460,7 +1499,12 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, covera
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Taraması</h2>
         </div>
 
-        {error && <div className="errbox">{error}</div>}
+        {error && (
+          <div className="errbox" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {error}
+            {photosUploadFailed && <button className="btn-outline" onClick={onRetryUploads}>Tekrar Dene</button>}
+          </div>
+        )}
 
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' }}>
@@ -1483,6 +1527,11 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, covera
                   >
                     <CloseIcon style={{ width: 12, height: 12 }} />
                   </button>
+                  {photo.uploadFailed ? (
+                    <div className="muted" style={{ fontSize: 11, color: 'var(--terracotta)', textAlign: 'center' }}>Kaydedilemedi</div>
+                  ) : !photo.photoId ? (
+                    <div className="muted" style={{ fontSize: 11, textAlign: 'center' }}>Kaydediliyor...</div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1524,8 +1573,8 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, covera
 
       {photos.length > 0 && (
         <div className="decision-footer">
-          <button className="btn-primary" onClick={onContinueAnyway} disabled={coverageChecking}>
-            Bu Fotoğraflarla Devam Et
+          <button className="btn-primary" onClick={onContinueAnyway} disabled={coverageChecking || photosUploading || photosUploadFailed}>
+            {photosUploading ? 'Fotoğraflar Kaydediliyor...' : 'Bu Fotoğraflarla Devam Et'}
           </button>
         </div>
       )}
@@ -1657,7 +1706,7 @@ function DecisionView({
 }
 
 function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming,
-  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat, chatDisabled, scanSaved, scanSaving, onRetryScanSave, readOnly }) {
+  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat, chatDisabled, scanSaved, scanSaving, onRetryScanSave, readOnly, finalItems }) {
   const includedCount = items.filter((it) => !it.excluded).length;
   const chatHistoryRef = useRef(null);
   useEffect(() => {
@@ -1729,50 +1778,62 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
           </div>
         )}
 
-        {items.map((item, index) => (
-          <div key={item.id} className={`roomcard${item.excluded ? ' excluded' : ''}`}>
-            <div className="roomcard-head">
-              <div>
-                <div className="roomcard-title">{item.label}</div>
-                <div className="muted">{item.category}</div>
+        {items.map((item, index) => {
+          // Sestia'nin orijinal degerlendirmesi (items) ile kullanicinin
+          // sonradan verdigi NIHAI karar (finalItems) BILEREK ayri
+          // tutuluyor — burada sadece goruntulerken yan yana gosteriliyor,
+          // birbirinin yerine yazilmiyor.
+          const finalMatch = readOnly && finalItems ? finalItems.find((f) => f.id === item.id) : null;
+          return (
+            <div key={item.id} className={`roomcard${item.excluded ? ' excluded' : ''}`}>
+              <div className="roomcard-head">
+                <div>
+                  <div className="roomcard-title">{item.label}</div>
+                  <div className="muted">{item.category}</div>
+                </div>
+                {!readOnly && (
+                  <button className="iconbtn" disabled={chatBusy || confirming} aria-label={item.excluded ? `${item.label} dahil et` : `${item.label} hariç tut`} style={{ width: 28, height: 28 }} onClick={() => onToggleExclude(index)}>
+                    <CloseIcon style={{ width: 14, height: 14 }} />
+                  </button>
+                )}
               </div>
-              {!readOnly && (
-                <button className="iconbtn" disabled={chatBusy || confirming} aria-label={item.excluded ? `${item.label} dahil et` : `${item.label} hariç tut`} style={{ width: 28, height: 28 }} onClick={() => onToggleExclude(index)}>
-                  <CloseIcon style={{ width: 14, height: 14 }} />
-                </button>
+              {!item.excluded && (
+                <>
+                  <div className="muted" style={{ fontSize: 12 }}>{item.reasoning}</div>
+                  {readOnly ? (
+                    <div className="muted">Sestia'nın önerisi: {REC_META[item.recommendation].label}</div>
+                  ) : (
+                    <>
+                      {item.manual && <div className="muted">Senin seçimin: {REC_META[item.recommendation].label}</div>}
+                      <div className="roomcard-actions">
+                        {ACTION_ORDER.map((key) => {
+                          const m = REC_META[key];
+                          return (
+                            <button
+                              key={key}
+                              className={`roomcard-actionbtn${item.recommendation === key ? ' selected' : ''}`}
+                              data-key={key}
+                              onClick={() => onSetRec(index, key)}
+                              disabled={chatBusy || confirming}
+                              title={m.label}
+                            >
+                              <m.Icon />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+              {readOnly && finalMatch && (
+                <div className="muted" style={{ fontWeight: 600 }}>
+                  {finalMatch.excluded ? 'Kararın: Hariç tutuldu' : `Kararın: ${REC_META[finalMatch.recommendation].label}`}
+                </div>
               )}
             </div>
-            {!item.excluded && (
-              <>
-                <div className="muted" style={{ fontSize: 12 }}>{item.reasoning}</div>
-                {readOnly ? (
-                  <div className="muted">Öneri: {REC_META[item.recommendation].label}</div>
-                ) : (
-                  <>
-                    {item.manual && <div className="muted">Senin seçimin: {REC_META[item.recommendation].label}</div>}
-                    <div className="roomcard-actions">
-                      {ACTION_ORDER.map((key) => {
-                        const m = REC_META[key];
-                        return (
-                          <button
-                            key={key}
-                            className={`roomcard-actionbtn${item.recommendation === key ? ' selected' : ''}`}
-                            data-key={key}
-                            onClick={() => onSetRec(index, key)}
-                            disabled={chatBusy || confirming}
-                            title={m.label}
-                          >
-                            <m.Icon />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {!readOnly && !analyzing && items.length > 0 && (
