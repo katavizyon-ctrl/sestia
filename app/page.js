@@ -111,7 +111,6 @@ export default function Page() {
   const activeRoomRef = useRef(null);
 
   useEffect(() => {
-    setUserNameState(getUserName());
     logEvent('session_start');
     refreshHomeState(true);
     // Bir hesap oturumu varsa suresini yeniler (30 gunluk kayan pencere).
@@ -138,6 +137,12 @@ export default function Page() {
       setHomeError(null);
       setCurrentIdentityId(data.identityId || null);
       setIdentityType(data.identityType || null);
+      // Isim kaynagi kimlik turune gore degisir: hesaplida sunucudan
+      // (homeState.name, auth_user'dan) gelir; misafirde SADECE su anki
+      // misafir kimligiyle eslesen yerel isim guvenilir — farkli bir
+      // (eski/yeni) misafir kimliginin ismini otomatik devralmaz (bkz.
+      // lib/client.js getUserName).
+      setUserNameState(data.identityType === 'guest' ? getUserName(data.identityId) : null);
       if (isInitial) {
         // Oturumu acik (hesapli) kullaniciya secim ekrani hic gosterilmez —
         // bu, Auth.js'in kriptografik olarak dogruladigi bir sunucu
@@ -170,9 +175,6 @@ export default function Page() {
     if (name === 'home') {
       activeRoomRef.current = null;
       refreshHomeState();
-      // Misafir ismi hesap ekranindan doner dönmez tazelenir — localStorage
-      // WelcomeView icinde yazildiginda bu state otomatik guncellenmiyordu.
-      setUserNameState(getUserName());
     }
     if (name === 'inspiration') loadInspiration();
     if (name === 'rooms') { activeRoomRef.current = null; loadRooms(); }
@@ -840,7 +842,13 @@ export default function Page() {
       {view === 'home' && (
         showWelcome ? (
           <WelcomeView
-            onGuestStart={() => setShowWelcome(false)}
+            onGuestStart={() => {
+              setShowWelcome(false);
+              // WelcomeView icinde kaydedilen isim, Page seviyesindeki
+              // state'e burada aktariliyor — aksi halde ana ekran ilk
+              // anda eski (bos) degeri gosterir (bkz. lib/client.js).
+              setUserNameState(getUserName(currentIdentityId));
+            }}
             currentIdentityId={currentIdentityId}
             emailReady={homeState.emailReady}
           />
@@ -1012,31 +1020,45 @@ const welcomeInputStyle = {
 };
 
 function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest, onBack }) {
-  const [name, setName] = useState(() => getUserName() || '');
+  const initialName = getUserName(currentIdentityId) || '';
+  const [name, setName] = useState(initialName);
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState(null); // null | 'not_configured' | 'sent' | 'error'
+  const [showEmailForm, setShowEmailForm] = useState(false);
+  // Zaten misafirsek VE hitap tercihi zaten biliniyorsa dogrudan yontem
+  // secim asamasindan basla — ayni tercihi tekrar sormuyoruz. Bilinmiyorsa
+  // (ör. daha once misafir dogrudan "Misafir Olarak Dene" ile devam etmisse)
+  // bir kez sorulur (bkz. AGENTS/urun karari 5).
+  const [stage, setStage] = useState(alreadyGuest && initialName ? 'method' : 'intro');
 
-  // Isim, e-posta/hesap akisindan BAGIMSIZ olarak yerel olarak saklanir —
-  // Resend hazir olmasa bile misafir kisisellestirmesi calissin diye.
+  // Isim, e-posta/hesap akisindan BAGIMSIZ olarak, SU ANKI misafir
+  // kimligine baglanarak yerel kaydedilir — Resend hazir olmasa bile
+  // misafir kisisellestirmesi calissin, farkli bir misafir kimligi eski
+  // ismi devralmasin diye (bkz. lib/client.js).
   function saveNameLocally() {
     const cleanName = name.trim();
-    if (cleanName) setUserName(cleanName);
+    if (cleanName) setUserName(cleanName, currentIdentityId);
+  }
+
+  function continueFromIntro(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    saveNameLocally();
+    setStage('method');
   }
 
   async function submitEmail(e) {
     e.preventDefault();
-    const cleanName = name.trim();
     const cleanEmail = email.trim();
-    if (!cleanName || !cleanEmail || submitting) return;
-    saveNameLocally();
+    if (!cleanEmail || submitting) return;
     setSubmitting(true);
     setStatus(null);
     try {
       const pre = await fetch('/api/account/precheck', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flow: 'signup', name: cleanName, email: cleanEmail }),
+        body: JSON.stringify({ flow: 'signup', name: name.trim(), email: cleanEmail }),
       });
       const preBody = await pre.json();
       if (!pre.ok) throw new Error('precheck_failed');
@@ -1084,85 +1106,121 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
         </div>
       )}
       <div className="scroll center" style={{ paddingTop: onBack ? 8 : 40, gap: 22 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-          <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
-          <h1 style={{ fontSize: 26, fontWeight: 600, textAlign: 'center' }}>Merhaba, ben {ASSISTANT_NAME}.</h1>
-          <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600, lineHeight: 1.4, maxWidth: 280 }}>
-            Yaşam alanını istediğin hâle getirelim.
-          </div>
-          <div className="muted" style={{ textAlign: 'center', fontSize: 14, lineHeight: 1.6, maxWidth: 280 }}>
-            Bir fotoğrafla başlayalım. Neyi değiştirmek istediğini konuşalım. Elindekileri birlikte
-            değerlendirip adım adım ilerleyelim.
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {WELCOME_STEPS.map((step, i) => (
-            <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <div className="flamewrap-compact"><step.icon style={{ width: 16, height: 16 }} /></div>
-                <div style={{ fontSize: 11.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap' }}>{step.label}</div>
+        {stage === 'intro' && (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+              <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
+              <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: 0.5, textAlign: 'center' }}>BİR ODA. BİR EŞYA.</h1>
+              <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600, lineHeight: 1.4, maxWidth: 280 }}>
+                Yaşam alanını istediğin hâle getirelim mi?
               </div>
-              {i < WELCOME_STEPS.length - 1 && (
-                <ChevronRightIcon style={{ width: 14, height: 14, color: 'var(--text-muted)', flexShrink: 0, marginBottom: 16 }} />
-              )}
+              <div className="muted" style={{ textAlign: 'center', fontSize: 14, lineHeight: 1.6, maxWidth: 280 }}>
+                Bir fotoğrafla başlayalım. Neyi değiştirmek istediğini konuşalım. Elindekileri birlikte
+                değerlendirip adım adım ilerleyelim.
+              </div>
             </div>
-          ))}
-        </div>
 
-        {status === 'sent' ? (
-          <div className="card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontWeight: 600, fontSize: 14.5 }}>E-posta yolda</div>
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              {email} adresine bir giriş bağlantısı gönderdik. Gelen kutunu kontrol et.
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={submitEmail} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={saveNameLocally}
-              placeholder="Sana nasıl hitap edelim?"
-              maxLength={60}
-              disabled={submitting}
-              style={welcomeInputStyle}
-            />
-            {emailReady ? (
-              <>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="ornek@email.com"
-                  disabled={submitting}
-                  style={welcomeInputStyle}
-                />
-                {status === 'not_configured' && (
-                  <div className="errbox">
-                    E-posta ile giriş şimdilik hazır değil — misafir olarak devam edebilirsin.
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {WELCOME_STEPS.map((step, i) => (
+                <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                    <div className="flamewrap-compact"><step.icon style={{ width: 16, height: 16 }} /></div>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap' }}>{step.label}</div>
                   </div>
-                )}
-                {status === 'error' && <div className="errbox">Bir sorun oldu, tekrar dener misin?</div>}
-                <button className="btn-primary" type="submit" disabled={!name.trim() || !email.trim() || submitting}>
-                  {submitting ? 'Gönderiliyor...' : 'E-posta ile Devam Et'}
-                </button>
-              </>
-            ) : (
-              <div className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>
-                E-posta ile giriş yakında burada olacak.
-              </div>
-            )}
-          </form>
+                  {i < WELCOME_STEPS.length - 1 && (
+                    <ChevronRightIcon style={{ width: 14, height: 14, color: 'var(--text-muted)', flexShrink: 0, marginBottom: 16 }} />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{ fontSize: 19, fontWeight: 600 }}>Merhaba!</div>
+              <div style={{ fontSize: 19, fontWeight: 600 }}>Ben {ASSISTANT_NAME}.</div>
+              <div className="muted" style={{ fontSize: 14, marginTop: 6 }}>Sana nasıl hitap etmemi istersin?</div>
+            </div>
+
+            <form onSubmit={continueFromIntro} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onBlur={saveNameLocally}
+                placeholder="Adın veya tercih ettiğin hitap şekli"
+                maxLength={60}
+                autoFocus
+                style={welcomeInputStyle}
+              />
+              <button className="btn-primary" type="submit" disabled={!name.trim()}>Devam Et</button>
+            </form>
+          </>
         )}
 
-        {!alreadyGuest && (
+        {stage === 'method' && (
           <>
-            <button className="btn-secondary" onClick={chooseGuest}>Misafir Olarak Dene</button>
-            <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', maxWidth: 260 }}>
-              Misafir olarak devam edersen kararların bu cihazda kalır; daha sonra hesap açarsan otomatik olarak aktarılmaz.
-            </div>
+            {name.trim() && (
+              <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600 }}>Memnun oldum, {name.trim()}.</div>
+            )}
+
+            {status === 'sent' ? (
+              <div className="card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontWeight: 600, fontSize: 14.5 }}>E-posta yolda</div>
+                <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                  {email} adresine bir giriş bağlantısı gönderdik. Gelen kutunu kontrol et.
+                </div>
+              </div>
+            ) : (
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {emailReady ? (
+                  showEmailForm ? (
+                    <form onSubmit={submitEmail} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="ornek@email.com"
+                        disabled={submitting}
+                        autoFocus
+                        style={welcomeInputStyle}
+                      />
+                      {status === 'not_configured' && (
+                        <div className="errbox">
+                          E-posta ile giriş şimdilik hazır değil — misafir olarak devam edebilirsin.
+                        </div>
+                      )}
+                      {status === 'error' && <div className="errbox">Bir sorun oldu, tekrar dener misin?</div>}
+                      <button className="btn-primary" type="submit" disabled={!email.trim() || submitting}>
+                        {submitting ? 'Gönderiliyor...' : 'Devam Et'}
+                      </button>
+                    </form>
+                  ) : (
+                    <div>
+                      <button className="btn-primary" onClick={() => setShowEmailForm(true)} style={{ width: '100%' }}>
+                        E-posta ile devam et
+                      </button>
+                      <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 6 }}>
+                        İlerlemeni koru ve farklı cihazlardan kaldığın yerden devam et.
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <div className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>
+                    E-posta ile giriş yakında burada olacak.
+                  </div>
+                )}
+
+                {!alreadyGuest && (
+                  <div>
+                    <button className="btn-secondary" onClick={chooseGuest} style={{ width: '100%' }}>
+                      Misafir Olarak Dene
+                    </button>
+                    <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 6 }}>
+                      Önce biraz keşfetmek ister misin?
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
