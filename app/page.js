@@ -73,6 +73,12 @@ export default function Page() {
     setUserNameState(getUserName());
     logEvent('session_start');
     refreshHomeState(true);
+    // Bir hesap oturumu varsa suresini yeniler (30 gunluk kayan pencere).
+    // Auth.js'in JWT yenileme mantigi SADECE /api/auth/session'a gercek bir
+    // istek gelince calisiyor (lib/auth.js'teki nota bkz.) — bu yuzden
+    // uygulama her acildiginda burada ayrica cagriliyor. Misafirse ya da
+    // hic oturum yoksa zararsiz bir no-op.
+    fetch('/api/auth/session').catch(() => {});
   }, []);
 
   useEffect(() => {

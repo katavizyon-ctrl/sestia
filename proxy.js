@@ -8,6 +8,13 @@ export function proxy(req) {
 
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
 
+  // Auth.js'in kendi rotalari (dogrulama linki, oturum, csrf...) ortak test
+  // ACCESS_CODE kapisinin disinda tutulmali. En kritik neden: dogrulama
+  // linki kullanicinin e-postasindan, hic access_ok cookie'si olmayan
+  // BASKA bir cihaz/tarayicida acilabilir — orada erisim kapisina takilirsa
+  // giris tamamlanamaz.
+  if (pathname.startsWith('/api/auth/')) return NextResponse.next();
+
   if (pathname === '/admin' || pathname.startsWith('/api/admin')) {
     const adminOk = req.cookies.get('admin_ok')?.value === '1';
     if (!adminOk) {
