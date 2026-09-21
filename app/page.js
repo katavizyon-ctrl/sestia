@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getDeviceId, compressImage, getLastRoom, setLastRoom, getUserName } from '@/lib/client';
+import { compressImage, getLastRoom, setLastRoom, getUserName } from '@/lib/client';
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
@@ -25,7 +25,6 @@ const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
 
 export default function Page() {
   const [view, setView] = useState('home');
-  const deviceIdRef = useRef(null);
 
   const [homeState, setHomeState] = useState({ streak: 0, points: 0, totalDecisions: 0 });
   const [homeMessage, setHomeMessage] = useState(null);
@@ -71,18 +70,16 @@ export default function Page() {
   const [inspirationError, setInspirationError] = useState(null);
 
   useEffect(() => {
-    const id = getDeviceId();
-    deviceIdRef.current = id;
     setUserNameState(getUserName());
-    logEvent(id, 'session_start');
-    refreshHomeState(id, true);
+    logEvent('session_start');
+    refreshHomeState(true);
   }, []);
 
   useEffect(() => {
-    logEvent(deviceIdRef.current, 'screen_view', { screen: view });
+    logEvent('screen_view', { screen: view });
   }, [view]);
 
-  async function refreshHomeState(deviceId, isInitial) {
+  async function refreshHomeState(isInitial) {
     try {
       // /api/state artik kimligi sunucu tarafinda (cookie/oturum) cozuyor,
       // deviceId query param'ina bakmiyor — bkz. lib/identity.js.
@@ -102,7 +99,7 @@ export default function Page() {
     if ((view === 'room-scan' || view === 'room-review') && name !== view) resetRoomScan();
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
-    if (name === 'home') refreshHomeState(deviceIdRef.current);
+    if (name === 'home') refreshHomeState();
     if (name === 'inspiration') loadInspiration();
     setView(name);
   }
@@ -111,7 +108,7 @@ export default function Page() {
     setInspirationLoading(true);
     setInspirationError(null);
     try {
-      const res = await fetch(`/api/inspiration?deviceId=${encodeURIComponent(deviceIdRef.current)}`);
+      const res = await fetch('/api/inspiration');
       if (res.status === 404) {
         setInspirationError('Henüz yeterli karar geçmişin yok. Birkaç eşyaya daha karar ver, sonra tekrar bak.');
         return;
@@ -195,7 +192,7 @@ export default function Page() {
       setAnalysis(result);
       setSelectedRec(result.recommendation);
       setMessages(result.messages);
-      logEvent(deviceIdRef.current, 'ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
+      logEvent('ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
     } catch {
       if (session !== singleSessionRef.current || controller.signal.aborted) return;
       setAnalyzeError('Analiz sırasında bir sorun oluştu. Aşağıdan öneriyi elle seçip devam edebilirsin.');
@@ -230,7 +227,7 @@ export default function Page() {
       setSelectedRec(result.recommendation);
       setMessages(result.messages);
       setChatDraft('');
-      logEvent(deviceIdRef.current, 'ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
+      logEvent('ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
     } catch {
       if (session !== singleSessionRef.current || controller.signal.aborted) return;
       setChatError('Yanıt alınamadı. Mesajını tekrar gönderebilir veya mevcut kararınla devam edebilirsin.');
@@ -253,7 +250,6 @@ export default function Page() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          deviceId: deviceIdRef.current,
           items: [{ category, recommendation: selectedRec, reasoning, room }],
           source: 'tekli',
         }),
@@ -261,7 +257,7 @@ export default function Page() {
       if (!res.ok) throw new Error('decide_failed');
       const state = await res.json();
       setHomeState(state);
-      logEvent(deviceIdRef.current, 'decision_confirmed', {
+      logEvent('decision_confirmed', {
         category,
         recommendation: selectedRec,
         changedFromSuggestion: !!analysis && analysis.recommendation !== selectedRec,
@@ -355,7 +351,7 @@ export default function Page() {
       if (session !== roomSessionRef.current) return;
       setRoomItems(data.items.map((item) => ({ ...item, excluded: false, manual: false })));
       setRoomMessages(data.messages);
-      logEvent(deviceIdRef.current, 'ai_suggestion_shown', {
+      logEvent('ai_suggestion_shown', {
         items: data.items.map((item) => ({ category: item.category, recommendation: item.recommendation })),
       });
     } catch {
@@ -429,7 +425,6 @@ export default function Page() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          deviceId: deviceIdRef.current,
           items: included.map((it) => ({
             category: it.category,
             recommendation: it.recommendation,
@@ -442,7 +437,7 @@ export default function Page() {
       const state = await res.json();
       setHomeState(state);
       included.forEach((it) => {
-        logEvent(deviceIdRef.current, 'decision_confirmed', {
+        logEvent('decision_confirmed', {
           category: it.category,
           recommendation: it.recommendation,
           changedFromSuggestion: !!it.manual,
@@ -463,7 +458,7 @@ export default function Page() {
   }
 
   function selectMode(mode) {
-    logEvent(deviceIdRef.current, 'mode_selected', { mode });
+    logEvent('mode_selected', { mode });
     goTo(mode === 'tek_esya' ? 'scan' : 'room-scan');
   }
 
@@ -560,7 +555,7 @@ export default function Page() {
         />
       )}
 
-      <FeedbackButton deviceId={deviceIdRef.current} screen={view} />
+      <FeedbackButton screen={view} />
     </div>
   );
 }

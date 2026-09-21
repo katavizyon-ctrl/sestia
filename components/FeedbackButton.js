@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { FeedbackIcon, CloseIcon } from '@/components/icons';
 
-export default function FeedbackButton({ deviceId, screen }) {
+export default function FeedbackButton({ screen }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
@@ -18,7 +18,7 @@ export default function FeedbackButton({ deviceId, screen }) {
       await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, message: clean, screen }),
+        body: JSON.stringify({ message: clean, screen }),
       });
       setSent(true);
       setMessage('');

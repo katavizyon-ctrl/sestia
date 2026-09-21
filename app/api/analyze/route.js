@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { analyzeSingleItem, analyzeRoom, validSingleMessages, validRoomItems } from '@/lib/anthropic';
 import { MAX_ROOM_PHOTOS } from '@/lib/constants';
+import { getIdentity } from '@/lib/identity';
 
 export const runtime = 'nodejs';
 
@@ -11,6 +12,14 @@ async function toImagePayload(file) {
 
 export async function POST(req) {
   try {
+    // Bu rota deviceId hic kullanmiyordu (stateless, kullanici verisi
+    // yazmiyor) ama kimliksiz herkesin pahali AI cagrisi yapabilmesi ayri
+    // bir risk — burada da gecerli bir kimlik (misafir ya da hesap) sart.
+    const identity = await getIdentity();
+    if (!identity) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+
     const formData = await req.formData();
     const mode = formData.get('mode') === 'oda' ? 'oda' : 'tekli';
 

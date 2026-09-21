@@ -1,12 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
-import { getDeviceId } from '@/lib/client';
 import { reportError } from '@/lib/telemetry';
 
 export default function GlobalError({ error, reset }) {
   useEffect(() => {
-    reportError(getDeviceId(), error, window.location.pathname);
+    reportError(error, window.location.pathname);
   }, [error]);
 
   return (

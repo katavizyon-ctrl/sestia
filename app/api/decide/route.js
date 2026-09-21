@@ -2,17 +2,20 @@ import { NextResponse } from 'next/server';
 import { recordDecisions } from '@/lib/db';
 import { RECOMMENDATIONS } from '@/lib/anthropic';
 import { ROOM_OPTIONS, DEFAULT_ROOM } from '@/lib/constants';
+import { getIdentity } from '@/lib/identity';
 
 export const runtime = 'nodejs';
 
 export async function POST(req) {
   try {
-    const body = await req.json();
-    const { deviceId, items, source } = body || {};
-
-    if (!deviceId || typeof deviceId !== 'string') {
-      return NextResponse.json({ error: 'device_id_required' }, { status: 400 });
+    const identity = await getIdentity();
+    if (!identity) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
+
+    const body = await req.json();
+    const { items, source } = body || {};
+
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'items_required' }, { status: 400 });
     }
@@ -24,7 +27,7 @@ export async function POST(req) {
       room: ROOM_OPTIONS.includes(item.room) ? item.room : DEFAULT_ROOM,
     }));
 
-    const state = recordDecisions(deviceId, cleanItems, source === 'oda' ? 'oda' : 'tekli');
+    const state = recordDecisions(identity.id, cleanItems, source === 'oda' ? 'oda' : 'tekli');
     return NextResponse.json(state);
   } catch (err) {
     console.error('decide_failed', err);
