@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { GUEST_COOKIE, createGuestToken, verifyGuestToken } from '@/lib/guestToken';
 
 const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access'];
 
@@ -29,7 +30,23 @@ export function proxy(req) {
     url.pathname = '/hosgeldin';
     return NextResponse.redirect(url);
   }
-  return NextResponse.next();
+
+  const res = NextResponse.next();
+  // Misafir kimligi client'in belirledigi bir sey degil: burada, sunucuda,
+  // imzali bir token olarak uretilir. Mevcut cookie gecersizse (yok, bozuk,
+  // imza uyusmuyor, suresi gecmis) HER ZAMAN yenisi mint edilir — asla eski
+  // degere guvenilmez.
+  if (!verifyGuestToken(req.cookies.get(GUEST_COOKIE)?.value)) {
+    const { token, expiresAt } = createGuestToken();
+    res.cookies.set(GUEST_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      expires: expiresAt,
+      path: '/',
+    });
+  }
+  return res;
 }
 
 export const config = {

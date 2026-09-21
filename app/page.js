@@ -84,7 +84,9 @@ export default function Page() {
 
   async function refreshHomeState(deviceId, isInitial) {
     try {
-      const res = await fetch(`/api/state?deviceId=${encodeURIComponent(deviceId)}`);
+      // /api/state artik kimligi sunucu tarafinda (cookie/oturum) cozuyor,
+      // deviceId query param'ina bakmiyor — bkz. lib/identity.js.
+      const res = await fetch('/api/state');
       if (!res.ok) throw new Error('state_failed');
       const data = await res.json();
       setHomeState(data);
