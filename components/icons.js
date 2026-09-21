@@ -160,6 +160,49 @@ export function CloseIcon(props) {
   );
 }
 
+export function BoxIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M4 8l8-4 8 4-8 4-8-4z" />
+      <path d="M4 8v9l8 4 8-4V8" />
+      <path d="M12 12v9" />
+    </Svg>
+  );
+}
+
+export function TagIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3h6a2 2 0 0 1 2 2v6L11 20l-8-8L12 3z" />
+      <circle cx="15.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+export function LayersIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3l9 5-9 5-9-5 9-5z" />
+      <path d="M3 13l9 5 9-5" />
+    </Svg>
+  );
+}
+
+export function DropletIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3c3.5 4 6 7.3 6 10.5a6 6 0 0 1-12 0C6 10.3 8.5 7 12 3z" />
+    </Svg>
+  );
+}
+
+export const TIP_META = {
+  kutu: { Icon: BoxIcon, varName: 'eucalyptus' },
+  etiket: { Icon: TagIcon, varName: 'terracotta' },
+  duzenle: { Icon: LayersIcon, varName: 'slate' },
+  temizlik: { Icon: DropletIcon, varName: 'recycle' },
+};
+
 export const REC_META = {
   tut: { title: 'Öneri: Tut', label: 'Tut', varName: 'eucalyptus', Icon: KeepIcon },
   sat: { title: 'Öneri: Sat', label: 'Sat', varName: 'terracotta', Icon: SellIcon },

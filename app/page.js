@@ -18,6 +18,7 @@ import {
   ChevronRightIcon,
   REC_META,
   REC_DONE_LABEL,
+  TIP_META,
 } from '@/components/icons';
 
 const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
@@ -64,6 +65,11 @@ export default function Page() {
   const [celebration, setCelebration] = useState({ streak: 0, pointsGained: 0, summary: '' });
   const [userName, setUserNameState] = useState(null);
 
+  // ---- haftalik ilham ----
+  const [inspiration, setInspiration] = useState(null);
+  const [inspirationLoading, setInspirationLoading] = useState(false);
+  const [inspirationError, setInspirationError] = useState(null);
+
   useEffect(() => {
     const id = getDeviceId();
     deviceIdRef.current = id;
@@ -95,7 +101,26 @@ export default function Page() {
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
     if (name === 'home') refreshHomeState(deviceIdRef.current);
+    if (name === 'inspiration') loadInspiration();
     setView(name);
+  }
+
+  async function loadInspiration() {
+    setInspirationLoading(true);
+    setInspirationError(null);
+    try {
+      const res = await fetch(`/api/inspiration?deviceId=${encodeURIComponent(deviceIdRef.current)}`);
+      if (res.status === 404) {
+        setInspirationError('Henüz yeterli karar geçmişin yok. Birkaç eşyaya daha karar ver, sonra tekrar bak.');
+        return;
+      }
+      if (!res.ok) throw new Error('inspiration_failed');
+      setInspiration(await res.json());
+    } catch {
+      setInspirationError('İpuçları yüklenemedi. Tekrar dener misin?');
+    } finally {
+      setInspirationLoading(false);
+    }
   }
 
   // ---------------- tekli akış ----------------
@@ -452,8 +477,19 @@ export default function Page() {
             homeError={homeError}
             onScanSingle={() => selectMode('tek_esya')}
             onScanRoom={() => selectMode('oda_tarama')}
+            onOpenInspiration={() => goTo('inspiration')}
           />
         )
+      )}
+
+      {view === 'inspiration' && (
+        <InspirationView
+          data={inspiration}
+          loading={inspirationLoading}
+          error={inspirationError}
+          onBack={() => goTo('home')}
+          onRetry={loadInspiration}
+        />
       )}
 
       {view === 'scan' && (
@@ -568,7 +604,7 @@ function WelcomeView({ onStart }) {
   );
 }
 
-function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom }) {
+function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom, onOpenInspiration }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -576,6 +612,21 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom 
           <div className="muted" style={{ fontWeight: 500 }}>Günaydın</div>
           <h1 style={{ fontSize: 28, fontWeight: 600 }}>Sen</h1>
         </div>
+
+        {homeState.totalDecisions >= 5 && (
+          <button
+            className="card"
+            style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
+            onClick={onOpenInspiration}
+          >
+            <div className="flamewrap-compact"><StarIcon style={{ width: 18, height: 18 }} /></div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>Bu Hafta</div>
+              <div className="muted">Kararlarına göre kişisel ipuçları</div>
+            </div>
+            <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+          </button>
+        )}
 
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -624,6 +675,65 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom 
         </div>
 
         {homeError && <div className="errbox">{homeError}</div>}
+      </div>
+    </section>
+  );
+}
+
+function InspirationView({ data, loading, error, onBack, onRetry }) {
+  return (
+    <section className="view">
+      <div className="scroll">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Bu Hafta</h2>
+        </div>
+
+        {loading && (
+          <div className="thinking">
+            <div className="spinner" />
+            <div>Kararlarına bakıp ipuçları hazırlıyoruz...</div>
+          </div>
+        )}
+
+        {error && (
+          <div className="errbox" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {error}
+            <button className="btn-outline" onClick={onRetry}>Tekrar Dene</button>
+          </div>
+        )}
+
+        {!loading && !error && data && (
+          <>
+            <div className="rec-banner" style={{ background: 'var(--eucalyptus)', color: '#fff' }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>{data.headline}</div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.9 }}>{data.subtext}</div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {data.tips.map((tip, i) => {
+                const meta = TIP_META[tip.icon];
+                return (
+                  <div key={i} className="card" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <div
+                      style={{
+                        width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+                        background: `var(--${meta.varName}-tint)`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <meta.Icon style={{ width: 20, height: 20, color: `var(--${meta.varName})` }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{tip.title}</div>
+                      <div className="muted">{tip.description}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );

@@ -2,40 +2,56 @@
 
 import { REC_META } from '@/components/icons';
 
-const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
+const ACTION_ROW_1 = ['tut', 'sat', 'bagisla'];
+const ACTION_ROW_2 = ['geri_donustur', 'at'];
+
+function ActionChip({ recKey }) {
+  const m = REC_META[recKey];
+  return (
+    <div
+      className="roomchip"
+      style={{ background: `var(--${m.varName}-tint)`, color: `var(--${m.varName})`, display: 'flex', gap: 6, alignItems: 'center' }}
+    >
+      <m.Icon style={{ width: 13, height: 13 }} />
+      {m.label}
+    </div>
+  );
+}
 
 export default function HosgeldinPage() {
   return (
     <div className="app">
       <section className="view">
-        <div className="scroll" style={{ paddingTop: 44, gap: 22 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-            <img src="/icon.svg" alt="" width={72} height={72} style={{ borderRadius: 18 }} />
+        <div className="scroll" style={{ paddingTop: 40, gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
             <h1 style={{ fontSize: 27, fontWeight: 600, textAlign: 'center', lineHeight: 1.25 }}>
-              Evini adım adım,<br />birlikte sadeleştirelim.
+              Bir Oda. Bir Eşya.
             </h1>
           </div>
 
-          <div style={{ textAlign: 'center', fontSize: 14.5, lineHeight: 1.6, maxWidth: 320, margin: '0 auto' }}>
-            Dolaptaki, çekmecedeki ya da o köşede duran bir eşyaya ne yapacağına karar vermek
-            bazen yorucu olabilir. Biz bunu kolaylaştırmak istedik: bir fotoğraf çek, yapay zeka
-            sana dürüst bir öneri sunsun — kararı hep sen verirsin.
+          <div className="muted" style={{ textAlign: 'center', fontSize: 14, lineHeight: 1.6, maxWidth: 300, margin: '0 auto' }}>
+            Bir oda veya bir eşya seç.<br />
+            Fotoğrafını çek ya da galerinden yükle.<br />
+            Yapay zekâ incelesin.<br />
+            Sonra birlikte değerlendirip karar verelim.
           </div>
 
-          <div className="roomchips" style={{ justifyContent: 'center' }}>
-            {ACTION_ORDER.map((key) => {
-              const m = REC_META[key];
-              return (
-                <div
-                  key={key}
-                  className="roomchip"
-                  style={{ background: `var(--${m.varName}-tint)`, color: `var(--${m.varName})`, display: 'flex', gap: 6, alignItems: 'center' }}
-                >
-                  <m.Icon style={{ width: 13, height: 13 }} />
-                  {m.label}
-                </div>
-              );
-            })}
+          <div style={{ textAlign: 'center', fontSize: 15.5, fontWeight: 600, lineHeight: 1.4, maxWidth: 300, margin: '0 auto' }}>
+            Tutmalı mı, satmalı mı, bağışlamalı mı?
+          </div>
+
+          <div style={{ textAlign: 'center', fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600, color: 'var(--terracotta)' }}>
+            Son karar her daim senin.
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="roomchips" style={{ justifyContent: 'center', flexWrap: 'nowrap' }}>
+              {ACTION_ROW_1.map((key) => <ActionChip key={key} recKey={key} />)}
+            </div>
+            <div className="roomchips" style={{ justifyContent: 'center', flexWrap: 'nowrap' }}>
+              {ACTION_ROW_2.map((key) => <ActionChip key={key} recKey={key} />)}
+            </div>
           </div>
 
           <div className="card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 6 }}>
