@@ -25,6 +25,17 @@ import {
 const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
 const SCAN_PERSIST_ERROR = 'Analiz odaya kaydedilemedi — bu oturumda görebilirsin ama sayfa yenilenirse kaybolabilir.';
 
+// SQLite datetime('now') UTC dondurur (Z eki olmadan) — JS Date'in bunu
+// yerel saat sanmamasi icin once acikca UTC olarak isaretliyoruz.
+function formatAnalysisDate(sqliteUtc) {
+  try {
+    const d = new Date(sqliteUtc.replace(' ', 'T') + 'Z');
+    return d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return sqliteUtc;
+  }
+}
+
 export default function Page() {
   const [view, setView] = useState('home');
 
@@ -51,7 +62,7 @@ export default function Page() {
   const singleSessionRef = useRef(0);
 
   // ---- oda taraması akışı ----
-  const [roomPhotos, setRoomPhotos] = useState([]); // [{id, file, url}] - analizden önce toplanan fotoğraflar
+  const [roomPhotos, setRoomPhotos] = useState([]); // [{id, file, url, photoId?}] - photoId, sunucuya kalici kaydedilince atanir
   const [roomAnalyzing, setRoomAnalyzing] = useState(false);
   const [roomCoverageChecking, setRoomCoverageChecking] = useState(false);
   const [roomCoverageResult, setRoomCoverageResult] = useState(null); // {sufficient, requestedAngle, reply} | null
@@ -62,9 +73,19 @@ export default function Page() {
   const [roomChatDraft, setRoomChatDraft] = useState('');
   const [roomChatBusy, setRoomChatBusy] = useState(false);
   const [roomChatError, setRoomChatError] = useState(null);
+  // Tamamlanmis analiz kalici olarak (room_analyses) yazilana kadar false —
+  // "Tümünü Onayla" bu true olmadan tiklanamaz, boylece kullanici hicbir
+  // zaman kalici kaydi olmayan bir analizi onaylanmis sanamaz.
+  const [roomScanSaved, setRoomScanSaved] = useState(false);
+  const [roomScanSaving, setRoomScanSaving] = useState(false);
+  const [historyAnalysis, setHistoryAnalysis] = useState(null);
   const roomFilesRef = useRef([]);
   const roomRequestRef = useRef(null);
   const roomSessionRef = useRef(0);
+  // Ayni canli tarama oturumunun (ilk analiz + sonraki sohbet turleri) HEP
+  // ayni kalici room_analyses satirini guncellemesini saglayan idempotency
+  // anahtari — resetRoomScan'de tazelenir (bkz. lib/db.js saveRoomAnalysis).
+  const roomAnalysisSessionKeyRef = useRef(null);
 
   const [celebration, setCelebration] = useState({ streak: 0, pointsGained: 0, summary: '' });
   const [userName, setUserNameState] = useState(null);
@@ -256,44 +277,64 @@ export default function Page() {
   // Oda taramasinda fotograflar EKLENIR EKLENMEZ (karar verilmesini
   // beklemeden) kalici galeriye yazilir — analiz/karar akisindan bagimsiz.
   // Basarisizlik sessizce yutulmuyor: kullaniciya acikca bildiriliyor.
-  // Zaten eklenmis fotograflari TEKRAR yuklemez — sadece yeni dosyalar
-  // parametre olarak gelir (bkz. addRoomPhotos).
-  async function persistNewRoomScanPhotos(files) {
+  // Zaten eklenmis fotograflari TEKRAR yuklemez — sadece yeni girdiler
+  // parametre olarak gelir (bkz. addRoomPhotos). Sunucunun atadigi kalici
+  // photo id'sini ilgili roomPhotos girdisine geri yaziyoruz — bu id,
+  // analizin HANGI fotograflara dayandigini kalici kayda baglamak icin
+  // gerekiyor (bkz. persistRoomScanIfActive).
+  async function persistNewRoomScanPhotos(entries) {
     const roomId = activeRoomRef.current?.id;
-    if (!roomId || files.length === 0) return;
+    if (!roomId || entries.length === 0) return;
     try {
-      for (const file of files) {
+      for (const entry of entries) {
         const fd = new FormData();
-        fd.append('photo', file, 'photo.jpg');
+        fd.append('photo', entry.file, 'photo.jpg');
         const res = await fetch(`/api/rooms/${roomId}/photos`, { method: 'POST', body: fd });
         if (!res.ok) throw new Error('persist_failed');
+        const saved = await res.json();
+        setRoomPhotos((current) => current.map((p) => (p.id === entry.id ? { ...p, photoId: saved.id } : p)));
       }
     } catch {
       setRoomError('Bazı fotoğraflar odaya kaydedilemedi. Bağlantını kontrol edip tekrar dener misin?');
     }
   }
 
-  // Tamamlanan analizi (esya listesi + sohbet gecmisi) odaya kaydeder —
-  // karar verilmesini beklemeden. Sadece bir odanin icinden baslatilmis
-  // taramalarda anlamli (activeRoomRef yoksa no-op).
+  // Tamamlanan analizi (esya listesi + sohbet gecmisi + dayandigi
+  // fotograflar) KALICI OLARAK (room_analyses) kaydeder — karar
+  // verilmesini beklemeden. Ayni canli oturumun butun turleri
+  // roomAnalysisSessionKeyRef ile AYNI kalici satiri gunceller; yeni bir
+  // tarama resetRoomScan'de tazelenen yeni bir anahtarla baslar, bu
+  // yuzden eskisinin uzerine asla yazmaz. Basarisiz olursa roomScanSaved
+  // false kalir — "Tümünü Onayla" bunu kullanarak devre disi kalir,
+  // kullanici kalici kaydi olmayan bir analizi onaylayamaz.
   async function persistRoomScanIfActive(items, messages) {
     const roomId = activeRoomRef.current?.id;
     if (!roomId) return;
+    setRoomScanSaving(true);
+    setRoomScanSaved(false);
     try {
+      const photoIds = roomPhotos.map((p) => p.photoId).filter((id) => Number.isInteger(id));
       const res = await fetch(`/api/rooms/${roomId}/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, messages }),
+        body: JSON.stringify({ items, messages, photoIds, sessionKey: roomAnalysisSessionKeyRef.current }),
       });
       if (!res.ok) throw new Error('scan_persist_failed');
+      setRoomScanSaved(true);
       setRoomError((current) => (current === SCAN_PERSIST_ERROR ? null : current));
     } catch {
+      setRoomScanSaved(false);
       setRoomError(SCAN_PERSIST_ERROR);
+    } finally {
+      setRoomScanSaving(false);
     }
   }
 
   // Odaya daha once kaydedilmis (karar verilmemis) bir taramaya geri
-  // doner — kullanici hic karar vermeden cikip donmus olabilir.
+  // doner — kullanici hic karar vermeden cikip donmus olabilir. Bu
+  // noktada roomScanSaved=true: room_scans'in var olmasi, sunucu
+  // tarafinda ayni istekte ONCE kalici room_analyses yazildigini
+  // (bkz. app/api/rooms/[id]/scan POST) garanti eder.
   function resumeRoomScan() {
     if (!roomDetail?.scan) return;
     activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
@@ -307,7 +348,23 @@ export default function Page() {
     setRoomMessages(roomDetail.scan.messages);
     setRoomAnalyzing(false);
     setRoomError(null);
+    setRoomScanSaved(true);
+    setRoomScanSaving(false);
     setView('room-review');
+  }
+
+  // Odanin daha once tamamlanmis (kalici) bir analizini salt-okunur
+  // goruntuler — yeni karar olusturmaz, eski analizi guncellemez.
+  function viewRoomAnalysis(analysis) {
+    setHistoryAnalysis(analysis);
+    setView('room-analysis');
+  }
+
+  // roomScanSaved false ise (kayit basarisiz oldu) ayni icerikle tekrar
+  // dener — sessionKey ayni oldugu icin kopya satir olusturmaz, sadece
+  // ayni kalici satiri gunceller.
+  function retryRoomScanSave() {
+    persistRoomScanIfActive(roomItems, roomMessages);
   }
 
   function finishCelebration() {
@@ -500,6 +557,10 @@ export default function Page() {
     roomRequestRef.current?.abort();
     roomRequestRef.current = null;
     roomFilesRef.current = [];
+    // Yeni bir tarama = yeni idempotency anahtari — bu sayede ilk analiz
+    // kesinlikle YENI bir kalici room_analyses satiri acar, eski (terk
+    // edilmis olsa bile) bir analizin uzerine asla yazmaz.
+    roomAnalysisSessionKeyRef.current = crypto.randomUUID();
     setRoomMessages([]);
     setRoomChatDraft('');
     setRoomChatBusy(false);
@@ -513,6 +574,8 @@ export default function Page() {
     setRoomCoverageResult(null);
     setRoomError(null);
     setRoomItems([]);
+    setRoomScanSaved(false);
+    setRoomScanSaving(false);
   }
 
   async function addRoomPhotos(e) {
@@ -540,7 +603,7 @@ export default function Page() {
       // Kapsam kontrolu ve kalici kayit birbirinden BAGIMSIZ — biri
       // basarisiz olsa da digerini engellemez, birbirini beklemez.
       checkRoomPhotoCoverage(updated);
-      persistNewRoomScanPhotos(newEntries.map((p) => p.file));
+      persistNewRoomScanPhotos(newEntries);
     }
   }
 
@@ -676,7 +739,11 @@ export default function Page() {
 
   async function confirmRoomDecisions() {
     const included = roomItems.filter((it) => !it.excluded);
-    if (included.length === 0 || roomConfirming || roomRequestRef.current) return;
+    // roomScanSaved=false demek, bu analizin kalici bir kaydi henuz yok
+    // demektir (basarisiz oldu ya da hala kaydediliyor) — kullanici bunu
+    // "tamamlanmis" sanarak onaylayamaz. Buton zaten devre disi birakilir,
+    // bu sadece ek bir guvenlik.
+    if (included.length === 0 || roomConfirming || roomRequestRef.current || !roomScanSaved) return;
     setRoomConfirming(true);
     try {
       const res = await fetch('/api/decide', {
@@ -767,6 +834,19 @@ export default function Page() {
           onScanHere={startScanInRoom}
           onRoomScanHere={startRoomScanInRoom}
           onResumeScan={resumeRoomScan}
+          onViewAnalysis={viewRoomAnalysis}
+        />
+      )}
+
+      {view === 'room-analysis' && historyAnalysis && (
+        <RoomReviewView
+          photos={historyAnalysis.photoIds.map((pid) => ({ id: pid, url: `/api/rooms/${roomDetail?.id}/photos/${pid}` }))}
+          analyzing={false}
+          error={null}
+          items={historyAnalysis.items}
+          messages={historyAnalysis.messages}
+          onBack={() => { setHistoryAnalysis(null); setView('room-detail'); }}
+          readOnly
         />
       )}
 
@@ -837,6 +917,9 @@ export default function Page() {
           chatError={roomChatError}
           onSendChat={sendRoomChat}
           chatDisabled={roomFilesRef.current.length === 0}
+          scanSaved={roomScanSaved}
+          scanSaving={roomScanSaving}
+          onRetryScanSave={retryRoomScanSave}
         />
       )}
 
@@ -1224,7 +1307,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
   );
 }
 
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere, onRoomScanHere, onResumeScan }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere, onRoomScanHere, onResumeScan, onViewAnalysis }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -1277,6 +1360,29 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                 <GridIcon style={{ width: 18, height: 18 }} /> Oda Taraması Yap
               </button>
             </div>
+
+            {room.analyses && room.analyses.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 10 }}>Geçmiş Analizler</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {room.analyses.map((a) => (
+                    <button
+                      key={a.id}
+                      className="card"
+                      style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                      onClick={() => onViewAnalysis(a)}
+                    >
+                      <div className="flamewrap-compact"><GridIcon style={{ width: 16, height: 16 }} /></div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{formatAnalysisDate(a.createdAt)}</div>
+                        <div className="muted">{a.items.length} eşya bulundu</div>
+                      </div>
+                      <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)' }} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
               <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 10 }}>Bu Odadaki Kararlar</div>
@@ -1551,7 +1657,7 @@ function DecisionView({
 }
 
 function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming,
-  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat, chatDisabled }) {
+  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat, chatDisabled, scanSaved, scanSaving, onRetryScanSave, readOnly }) {
   const includedCount = items.filter((it) => !it.excluded).length;
   const chatHistoryRef = useRef(null);
   useEffect(() => {
@@ -1563,7 +1669,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
       <div className="scroll">
         <div className="topbar">
           <button className="iconbtn" onClick={onBack} disabled={confirming} aria-label="Geri"><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Analizi</h2>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>{readOnly ? 'Geçmiş Analiz' : 'Oda Analizi'}</h2>
         </div>
 
         <div className="photostrip">
@@ -1593,7 +1699,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
                 return text ? <p key={index} className={`chat-message chat-${message.role}`}><span className="chat-speaker">{reply ? 'Asistan' : 'Sen'}</span>{text}</p> : null;
               })}
             </div>
-            {chatDisabled ? (
+            {readOnly ? null : chatDisabled ? (
               <div className="muted" style={{ fontSize: 12.5 }}>
                 Bu, daha önce kaydedilmiş bir tarama — sohbete devam etmek için fotoğraflar yeniden gerekiyor.
                 İstersen mevcut önerilerle kararlarını verebilirsin.
@@ -1619,7 +1725,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
 
         {!analyzing && items.length > 0 && (
           <div className="muted" style={{ fontSize: 12 }}>
-            {items.length} eşya bulundu. İstemediğini kapatabilir, önerisini değiştirebilirsin.
+            {readOnly ? `${items.length} eşya bulunmuştu.` : `${items.length} eşya bulundu. İstemediğini kapatabilir, önerisini değiştirebilirsin.`}
           </div>
         )}
 
@@ -1630,40 +1736,54 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
                 <div className="roomcard-title">{item.label}</div>
                 <div className="muted">{item.category}</div>
               </div>
-              <button className="iconbtn" disabled={chatBusy || confirming} aria-label={item.excluded ? `${item.label} dahil et` : `${item.label} hariç tut`} style={{ width: 28, height: 28 }} onClick={() => onToggleExclude(index)}>
-                <CloseIcon style={{ width: 14, height: 14 }} />
-              </button>
+              {!readOnly && (
+                <button className="iconbtn" disabled={chatBusy || confirming} aria-label={item.excluded ? `${item.label} dahil et` : `${item.label} hariç tut`} style={{ width: 28, height: 28 }} onClick={() => onToggleExclude(index)}>
+                  <CloseIcon style={{ width: 14, height: 14 }} />
+                </button>
+              )}
             </div>
             {!item.excluded && (
               <>
                 <div className="muted" style={{ fontSize: 12 }}>{item.reasoning}</div>
-                {item.manual && <div className="muted">Senin seçimin: {REC_META[item.recommendation].label}</div>}
-                <div className="roomcard-actions">
-                  {ACTION_ORDER.map((key) => {
-                    const m = REC_META[key];
-                    return (
-                      <button
-                        key={key}
-                        className={`roomcard-actionbtn${item.recommendation === key ? ' selected' : ''}`}
-                        data-key={key}
-                        onClick={() => onSetRec(index, key)}
-                        disabled={chatBusy || confirming}
-                        title={m.label}
-                      >
-                        <m.Icon />
-                      </button>
-                    );
-                  })}
-                </div>
+                {readOnly ? (
+                  <div className="muted">Öneri: {REC_META[item.recommendation].label}</div>
+                ) : (
+                  <>
+                    {item.manual && <div className="muted">Senin seçimin: {REC_META[item.recommendation].label}</div>}
+                    <div className="roomcard-actions">
+                      {ACTION_ORDER.map((key) => {
+                        const m = REC_META[key];
+                        return (
+                          <button
+                            key={key}
+                            className={`roomcard-actionbtn${item.recommendation === key ? ' selected' : ''}`}
+                            data-key={key}
+                            onClick={() => onSetRec(index, key)}
+                            disabled={chatBusy || confirming}
+                            title={m.label}
+                          >
+                            <m.Icon />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
         ))}
       </div>
 
-      {!analyzing && items.length > 0 && (
-        <div className="decision-footer">
-          <button className="btn-primary" disabled={includedCount === 0 || confirming || chatBusy} onClick={onConfirm}>
+      {!readOnly && !analyzing && items.length > 0 && (
+        <div className="decision-footer" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {!scanSaved && (
+            <div className="errbox" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span>{scanSaving ? 'Analiz kaydediliyor...' : 'Analiz henüz kalıcı olarak kaydedilemedi — kararlarını onaylayamazsın.'}</span>
+              {!scanSaving && <button type="button" className="btn-outline" onClick={onRetryScanSave}>Tekrar Dene</button>}
+            </div>
+          )}
+          <button className="btn-primary" disabled={includedCount === 0 || confirming || chatBusy || !scanSaved} onClick={onConfirm}>
             {confirming ? 'Kaydediliyor...' : `Tümünü Onayla (${includedCount} eşya)`}
           </button>
         </div>
