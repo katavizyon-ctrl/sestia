@@ -16,6 +16,7 @@ import {
   CloseIcon,
   SendIcon,
   ChevronRightIcon,
+  BoxIcon,
   REC_META,
   REC_DONE_LABEL,
   TIP_META,
@@ -69,6 +70,20 @@ export default function Page() {
   const [inspirationLoading, setInspirationLoading] = useState(false);
   const [inspirationError, setInspirationError] = useState(null);
 
+  // ---- odalarim ----
+  const [rooms, setRooms] = useState([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState(null);
+  const [roomCreating, setRoomCreating] = useState(false);
+  const [roomDetail, setRoomDetail] = useState(null);
+  const [roomDetailLoading, setRoomDetailLoading] = useState(false);
+  const [roomDetailError, setRoomDetailError] = useState(null);
+  const [roomPhotoUploading, setRoomPhotoUploading] = useState(false);
+  // Tek-esya akisi "bir odanin icinden" baslatildiysa, o kararin hangi
+  // odaya baglanacagini tutar. Sadece goTo('home'/'rooms') ile temizlenir —
+  // scan/decision/celebration arasinda gecerliligini korur.
+  const activeRoomRef = useRef(null);
+
   useEffect(() => {
     setUserNameState(getUserName());
     logEvent('session_start');
@@ -105,9 +120,103 @@ export default function Page() {
     if ((view === 'room-scan' || view === 'room-review') && name !== view) resetRoomScan();
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
-    if (name === 'home') refreshHomeState();
+    if (name === 'home') { activeRoomRef.current = null; refreshHomeState(); }
     if (name === 'inspiration') loadInspiration();
+    if (name === 'rooms') { activeRoomRef.current = null; loadRooms(); }
     setView(name);
+  }
+
+  // ---------------- odalarim ----------------
+
+  async function loadRooms() {
+    setRoomsLoading(true);
+    setRoomsError(null);
+    try {
+      const res = await fetch('/api/rooms');
+      if (!res.ok) throw new Error('rooms_failed');
+      const data = await res.json();
+      setRooms(data.rooms || []);
+    } catch {
+      setRoomsError('Odalar yüklenemedi. Tekrar dener misin?');
+    } finally {
+      setRoomsLoading(false);
+    }
+  }
+
+  async function createRoomAndOpen(name) {
+    setRoomCreating(true);
+    setRoomsError(null);
+    try {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error('create_room_failed');
+      const room = await res.json();
+      setRooms((cur) => [{ ...room, decisionCount: 0, coverPhotoId: null }, ...cur]);
+      await openRoom(room.id);
+    } catch {
+      setRoomsError('Oda oluşturulamadı. Tekrar dener misin?');
+    } finally {
+      setRoomCreating(false);
+    }
+  }
+
+  async function openRoom(id) {
+    setRoomDetailLoading(true);
+    setRoomDetailError(null);
+    setView('room-detail');
+    try {
+      const res = await fetch(`/api/rooms/${id}`);
+      if (!res.ok) throw new Error('room_failed');
+      setRoomDetail(await res.json());
+    } catch {
+      setRoomDetailError('Oda yüklenemedi. Tekrar dener misin?');
+    } finally {
+      setRoomDetailLoading(false);
+    }
+  }
+
+  async function handleRoomPhotoUpload(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file || !roomDetail) return;
+    setRoomPhotoUploading(true);
+    setRoomDetailError(null);
+    try {
+      let compressed;
+      try {
+        compressed = await compressImage(file);
+      } catch {
+        compressed = file;
+      }
+      const formData = new FormData();
+      formData.append('photo', compressed, 'photo.jpg');
+      const res = await fetch(`/api/rooms/${roomDetail.id}/photos`, { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('upload_failed');
+      await openRoom(roomDetail.id);
+    } catch {
+      setRoomDetailError('Fotoğraf yüklenemedi. Tekrar dener misin?');
+    } finally {
+      setRoomPhotoUploading(false);
+    }
+  }
+
+  function startScanInRoom() {
+    if (!roomDetail) return;
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    goTo('scan');
+  }
+
+  function finishCelebration() {
+    if (activeRoomRef.current) {
+      const roomId = activeRoomRef.current.id;
+      activeRoomRef.current = null;
+      openRoom(roomId);
+    } else {
+      goTo('home');
+    }
   }
 
   async function loadInspiration() {
@@ -256,7 +365,7 @@ export default function Page() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: [{ category, recommendation: selectedRec, reasoning, room }],
+          items: [{ category, recommendation: selectedRec, reasoning, room, roomId: activeRoomRef.current?.id ?? null }],
           source: 'tekli',
         }),
       });
@@ -435,6 +544,7 @@ export default function Page() {
             category: it.category,
             recommendation: it.recommendation,
             reasoning: it.reasoning,
+            roomId: activeRoomRef.current?.id ?? null,
           })),
           source: 'oda',
         }),
@@ -481,8 +591,33 @@ export default function Page() {
             onScanSingle={() => selectMode('tek_esya')}
             onScanRoom={() => selectMode('oda_tarama')}
             onOpenInspiration={() => goTo('inspiration')}
+            onOpenRooms={() => goTo('rooms')}
           />
         )
+      )}
+
+      {view === 'rooms' && (
+        <RoomsListView
+          rooms={rooms}
+          loading={roomsLoading}
+          error={roomsError}
+          creating={roomCreating}
+          onBack={() => goTo('home')}
+          onOpenRoom={openRoom}
+          onCreateRoom={createRoomAndOpen}
+        />
+      )}
+
+      {view === 'room-detail' && (
+        <RoomDetailView
+          room={roomDetail}
+          loading={roomDetailLoading}
+          error={roomDetailError}
+          uploading={roomPhotoUploading}
+          onBack={() => goTo('rooms')}
+          onAddPhoto={handleRoomPhotoUpload}
+          onScanHere={startScanInRoom}
+        />
       )}
 
       {view === 'inspiration' && (
@@ -557,7 +692,7 @@ export default function Page() {
           celebration={celebration}
           userName={userName}
           onScanAgain={() => goTo('scan')}
-          onHome={() => goTo('home')}
+          onHome={finishCelebration}
         />
       )}
 
@@ -607,7 +742,7 @@ function WelcomeView({ onStart }) {
   );
 }
 
-function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom, onOpenInspiration }) {
+function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom, onOpenInspiration, onOpenRooms }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -615,6 +750,19 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom,
           <div className="muted" style={{ fontWeight: 500 }}>Günaydın</div>
           <h1 style={{ fontSize: 28, fontWeight: 600 }}>Sen</h1>
         </div>
+
+        <button
+          className="card"
+          style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
+          onClick={onOpenRooms}
+        >
+          <div className="flamewrap-compact"><BoxIcon style={{ width: 18, height: 18 }} /></div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>Odalarım</div>
+            <div className="muted">Oluşturduğun odalara göz at</div>
+          </div>
+          <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+        </button>
 
         {homeState.totalDecisions >= 5 && (
           <button
@@ -734,6 +882,150 @@ function InspirationView({ data, loading, error, onBack, onRetry }) {
                   </div>
                 );
               })}
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, onCreateRoom }) {
+  const [name, setName] = useState('');
+  function submit(e) {
+    e.preventDefault();
+    const clean = name.trim();
+    if (!clean || creating) return;
+    onCreateRoom(clean);
+    setName('');
+  }
+  return (
+    <section className="view">
+      <div className="scroll">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Odalarım</h2>
+        </div>
+
+        <form onSubmit={submit} style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Örn. Salon"
+            maxLength={60}
+            disabled={creating}
+            style={{
+              flex: 1, boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12,
+              border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 15,
+            }}
+          />
+          <button className="btn-primary" type="submit" disabled={!name.trim() || creating} style={{ width: 'auto', padding: '0 18px' }}>
+            {creating ? '...' : 'Ekle'}
+          </button>
+        </form>
+
+        {error && <div className="errbox">{error}</div>}
+        {loading && (
+          <div className="thinking">
+            <div className="spinner" />
+          </div>
+        )}
+
+        {!loading && rooms.length === 0 && (
+          <div className="muted" style={{ textAlign: 'center', marginTop: 8 }}>
+            Henüz bir oda oluşturmadın. Yukarıdan bir isim yazıp başlayabilirsin.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {rooms.map((room) => (
+            <button
+              key={room.id}
+              className="card"
+              style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
+              onClick={() => onOpenRoom(room.id)}
+            >
+              {room.coverPhotoId ? (
+                <img
+                  src={`/api/rooms/${room.id}/photos/${room.coverPhotoId}`}
+                  alt=""
+                  style={{ width: 48, height: 48, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }}
+                />
+              ) : (
+                <div className="flamewrap-compact"><GridIcon style={{ width: 18, height: 18 }} /></div>
+              )}
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>{room.name}</div>
+                <div className="muted">{room.decisionCount} karar</div>
+              </div>
+              <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere }) {
+  return (
+    <section className="view">
+      <div className="scroll">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>{room?.name || 'Oda'}</h2>
+        </div>
+
+        {loading && (
+          <div className="thinking">
+            <div className="spinner" />
+          </div>
+        )}
+        {error && <div className="errbox">{error}</div>}
+
+        {room && !loading && (
+          <>
+            {room.photos.length > 0 && (
+              <div className="photogrid">
+                {room.photos.map((photo) => (
+                  <div key={photo.id} className="photothumb">
+                    <img src={`/api/rooms/${room.id}/photos/${photo.id}`} alt="" />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <CaptureButtons
+              onFile={onAddPhoto}
+              idPrefix="room-detail-photo"
+              cameraLabel={uploading ? 'Yükleniyor...' : (room.photos.length ? 'Bir Fotoğraf Daha Ekle' : 'Fotoğraf Ekle')}
+              galleryLabel="Galeriden Ekle"
+            />
+
+            <button className="btn-outline" onClick={onScanHere} disabled={uploading}>
+              <CameraIcon style={{ width: 18, height: 18 }} /> Bu Odada Eşya Tara
+            </button>
+
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+              <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 10 }}>Bu Odadaki Kararlar</div>
+              {room.decisions.length === 0 && <div className="muted">Henüz bu odada bir karar verilmedi.</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {room.decisions.map((d) => {
+                  const meta = REC_META[d.recommendation];
+                  return (
+                    <div key={d.id} className="card" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <div className="flamewrap-compact" style={{ background: `var(--${meta.varName}-tint)` }}>
+                        <meta.Icon style={{ width: 16, height: 16, color: `var(--${meta.varName})` }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{d.category}</div>
+                        <div className="muted">{meta.label}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </>
         )}

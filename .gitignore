@@ -5,6 +5,7 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+data/room-photos/
 backups/
 .env
 .env.local

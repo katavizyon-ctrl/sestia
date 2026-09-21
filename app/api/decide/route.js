@@ -25,6 +25,9 @@ export async function POST(req) {
       recommendation: RECOMMENDATIONS.includes(item.recommendation) ? item.recommendation : 'tut',
       reasoning: (item.reasoning || '').toString().slice(0, 300),
       room: ROOM_OPTIONS.includes(item.room) ? item.room : DEFAULT_ROOM,
+      // Sahiplik burada degil, recordDecisions icinde dogrulaniyor —
+      // client'in soyledigi roomId hicbir zaman doğrudan guvenilmiyor.
+      roomId: Number.isInteger(item.roomId) ? item.roomId : null,
     }));
 
     const state = recordDecisions(identity.id, cleanItems, source === 'oda' ? 'oda' : 'tekli');
