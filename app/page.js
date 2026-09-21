@@ -1013,12 +1013,22 @@ const welcomeInputStyle = {
   border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 15,
 };
 
+// Auth.js'in signIn hata URL'sindeki "error" kodunu kisa, anlasilir bir
+// Turkce ifadeye ceviriyoruz — eslesme yoksa ham kod aynen gosterilir
+// (erken test asamasinda teshis icin faydali, tamamen anlamsiz degil).
+const EMAIL_ERROR_LABELS = {
+  Configuration: 'sunucu e-posta yapılandırmasında bir sorun var',
+  AccessDenied: 'erişim reddedildi',
+  Verification: 'doğrulama bağlantısı geçersiz veya süresi dolmuş',
+};
+
 function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest, onBack }) {
   const initialName = getUserName(currentIdentityId) || '';
   const [name, setName] = useState(initialName);
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState(null); // null | 'not_configured' | 'sent' | 'error'
+  const [errorDetail, setErrorDetail] = useState(null); // Auth.js'in dondurdugu ham hata kodu (varsa)
   const [showEmailForm, setShowEmailForm] = useState(false);
   // Zaten misafirsek VE hitap tercihi zaten biliniyorsa dogrudan yontem
   // secim asamasindan basla — ayni tercihi tekrar sormuyoruz. Bilinmiyorsa
@@ -1048,6 +1058,7 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
     if (!cleanEmail || submitting) return;
     setSubmitting(true);
     setStatus(null);
+    setErrorDetail(null);
     try {
       const pre = await fetch('/api/account/precheck', {
         method: 'POST',
@@ -1065,10 +1076,32 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
       const { csrfToken } = await csrfRes.json();
       const signinRes = await fetch('/api/auth/signin/resend', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          // KRITIK: bu baslik olmadan Auth.js basari/hata FARK ETMEKSIZIN
+          // gercek bir HTTP redirect donuyor, fetch() bunu sessizce takip
+          // ediyor ve hedef sayfa (hata sayfasi dahil) 200 render ettigi
+          // icin signinRes.ok HER ZAMAN true oluyordu — yani Resend
+          // gonderimi gercekten BASARISIZ olsa bile kullaniciya "e-posta
+          // yolda" denebiliyordu. next-auth/react'in kendi signIn()
+          // istemcisi de ayni basligi kullaniyor (bkz. node_modules/
+          // next-auth/src/react.tsx) — bu baslikla Auth.js HER ZAMAN
+          // {url} icerikli bir JSON donuyor, biz de basari/hatayi o
+          // URL'nin "error" query param'ina bakarak GUVENILIR sekilde
+          // ayirt edebiliyoruz.
+          'X-Auth-Return-Redirect': '1',
+        },
         body: new URLSearchParams({ email: cleanEmail, csrfToken, callbackUrl: '/', json: 'true' }),
       });
       if (!signinRes.ok) throw new Error('signin_failed');
+      const signinData = await signinRes.json().catch(() => null);
+      const resultUrl = signinData?.url ? new URL(signinData.url) : null;
+      const errorCode = resultUrl?.searchParams.get('error');
+      if (errorCode) {
+        setStatus('error');
+        setErrorDetail(errorCode);
+        return;
+      }
       // Burada "secildi" bayragi bilerek basmiyoruz: bu adimda kullanici
       // henuz dogrulanmadi, hala misafir. Dogrulama tamamlaninca gercek
       // hesap oturumu (identityType==='account') zaten sunucu tarafinda
@@ -1077,6 +1110,7 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
       setStatus('sent');
     } catch {
       setStatus('error');
+      setErrorDetail(null);
     } finally {
       setSubmitting(false);
     }
@@ -1159,7 +1193,11 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
                           E-posta ile giriş şimdilik hazır değil — misafir olarak devam edebilirsin.
                         </div>
                       )}
-                      {status === 'error' && <div className="errbox">Bir sorun oldu, tekrar dener misin?</div>}
+                      {status === 'error' && (
+                        <div className="errbox">
+                          E-posta gönderilemedi{errorDetail ? ` (${EMAIL_ERROR_LABELS[errorDetail] || errorDetail})` : ''} — tekrar dener misin?
+                        </div>
+                      )}
                       <button className="btn-primary" type="submit" disabled={!email.trim() || submitting}>
                         {submitting ? 'Gönderiliyor...' : 'Devam Et'}
                       </button>
