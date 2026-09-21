@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { analyzeSingleItem, analyzeRoom, validSingleMessages, validRoomItems } from '@/lib/anthropic';
+import { analyzeSingleItem, analyzeRoom, checkRoomCoverage, validSingleMessages, validRoomItems } from '@/lib/anthropic';
 import { MAX_ROOM_PHOTOS } from '@/lib/constants';
 import { getIdentity } from '@/lib/identity';
 
@@ -21,7 +21,20 @@ export async function POST(req) {
     }
 
     const formData = await req.formData();
-    const mode = formData.get('mode') === 'oda' ? 'oda' : 'tekli';
+    const modeRaw = formData.get('mode');
+    const mode = modeRaw === 'oda' ? 'oda' : modeRaw === 'oda-kapsam' ? 'oda-kapsam' : 'tekli';
+
+    // Kapsam kontrolu, tam oda analizinden BAGIMSIZ ve stateless (sohbet
+    // gecmisi/esya listesi almiyor) — mesaj dogrulamasina hic girmeden
+    // erkenden ayriliyor.
+    if (mode === 'oda-kapsam') {
+      const files = formData.getAll('image').filter((f) => f && typeof f !== 'string');
+      if (files.length === 0 || files.length > MAX_ROOM_PHOTOS) {
+        return NextResponse.json({ error: 'image_required' }, { status: 400 });
+      }
+      const images = await Promise.all(files.map(toImagePayload));
+      return NextResponse.json(await checkRoomCoverage(images));
+    }
 
     let messages = [];
     try {

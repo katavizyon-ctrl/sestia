@@ -51,6 +51,8 @@ export default function Page() {
   // ---- oda taraması akışı ----
   const [roomPhotos, setRoomPhotos] = useState([]); // [{id, file, url}] - analizden önce toplanan fotoğraflar
   const [roomAnalyzing, setRoomAnalyzing] = useState(false);
+  const [roomCoverageChecking, setRoomCoverageChecking] = useState(false);
+  const [roomCoverageResult, setRoomCoverageResult] = useState(null); // {sufficient, requestedAngle, reply} | null
   const [roomError, setRoomError] = useState(null);
   const [roomItems, setRoomItems] = useState([]);
   const [roomConfirming, setRoomConfirming] = useState(false);
@@ -207,6 +209,25 @@ export default function Page() {
     if (!roomDetail) return;
     activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
     goTo('scan');
+  }
+
+  function startRoomScanInRoom() {
+    if (!roomDetail) return;
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    goTo('room-scan');
+  }
+
+  // Bir odanin icinden baslatilan taramalarda kullanilan fotograflari da
+  // odanin kalici galerisine kaydeder — sessizce (en iyi caba), kullanici
+  // akisini bloklamaz/bekletmez.
+  function persistPhotosToActiveRoom(files) {
+    const roomId = activeRoomRef.current?.id;
+    if (!roomId) return;
+    files.forEach((file) => {
+      const fd = new FormData();
+      fd.append('photo', file, 'photo.jpg');
+      fetch(`/api/rooms/${roomId}/photos`, { method: 'POST', body: fd }).catch(() => {});
+    });
   }
 
   function finishCelebration() {
@@ -378,6 +399,7 @@ export default function Page() {
         changedFromSuggestion: !!analysis && analysis.recommendation !== selectedRec,
         source: 'tekli',
       });
+      if (singleFileRef.current) persistPhotosToActiveRoom([singleFileRef.current]);
       setCelebration({
         streak: state.streak,
         pointsGained: 5,
@@ -407,6 +429,8 @@ export default function Page() {
       return [];
     });
     setRoomAnalyzing(false);
+    setRoomCoverageChecking(false);
+    setRoomCoverageResult(null);
     setRoomError(null);
     setRoomItems([]);
   }
@@ -424,15 +448,15 @@ export default function Page() {
     const compressedFiles = await Promise.all(
       accepted.map((file) => compressImage(file, 1600).catch(() => file))
     );
-    setRoomPhotos((current) => [
-      ...current,
-      ...compressedFiles.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) })),
-    ]);
+    const newEntries = compressedFiles.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) }));
+    const updated = [...roomPhotos, ...newEntries];
+    setRoomPhotos(updated);
     setRoomError(
       oversizedCount > 0
         ? `${oversizedCount} fotoğraf çok büyük olduğu için eklenemedi (20 MB sınırı).`
         : null
     );
+    if (newEntries.length > 0) checkRoomPhotoCoverage(updated);
   }
 
   function removeRoomPhoto(id) {
@@ -441,13 +465,43 @@ export default function Page() {
       if (target) URL.revokeObjectURL(target.url);
       return current.filter((p) => p.id !== id);
     });
+    setRoomCoverageResult(null);
   }
 
-  async function startRoomAnalysis() {
-    if (roomPhotos.length === 0) return;
+  // Ucuz, ayri bir AI cagrisi — pahali tam oda analizini (esya listeleme)
+  // her fotograf eklendiginde tekrar calistirmamak icin once bu kontrol
+  // ediliyor. Yeterliyse otomatik olarak tam analize gecer; degilse
+  // Sestia'nin istedigi aciyi gosterip kullaniciyi bekler (istedigi zaman
+  // "Bu Fotograflarla Devam Et" ile atlayabilir).
+  async function checkRoomPhotoCoverage(photos) {
+    setRoomCoverageChecking(true);
+    setRoomCoverageResult(null);
+    setRoomError(null);
+    try {
+      const formData = new FormData();
+      photos.forEach((p) => formData.append('image', p.file));
+      formData.append('mode', 'oda-kapsam');
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('coverage_failed');
+      const result = await res.json();
+      if (result.sufficient) {
+        startRoomAnalysis(photos);
+      } else {
+        setRoomCoverageResult(result);
+      }
+    } catch {
+      setRoomError('Fotoğraf kontrolünde bir sorun oldu. Yine de bu fotoğraflarla devam edebilirsin.');
+    } finally {
+      setRoomCoverageChecking(false);
+    }
+  }
+
+  async function startRoomAnalysis(photosOverride) {
+    const photos = photosOverride || roomPhotos;
+    if (photos.length === 0) return;
     roomSessionRef.current += 1;
     const session = roomSessionRef.current;
-    roomFilesRef.current = roomPhotos.map((p) => p.file);
+    roomFilesRef.current = photos.map((p) => p.file);
     const controller = new AbortController();
     roomRequestRef.current = controller;
     setRoomItems([]);
@@ -560,6 +614,7 @@ export default function Page() {
           source: 'oda',
         });
       });
+      persistPhotosToActiveRoom(roomFilesRef.current);
       setCelebration({
         streak: state.streak,
         pointsGained: included.length * 5,
@@ -617,6 +672,7 @@ export default function Page() {
           onBack={() => goTo('rooms')}
           onAddPhoto={handleRoomPhotoUpload}
           onScanHere={startScanInRoom}
+          onRoomScanHere={startRoomScanInRoom}
         />
       )}
 
@@ -662,8 +718,10 @@ export default function Page() {
           photos={roomPhotos}
           onAddFiles={addRoomPhotos}
           onRemovePhoto={removeRoomPhoto}
-          onAnalyze={startRoomAnalysis}
           error={roomError}
+          coverageChecking={roomCoverageChecking}
+          coverageResult={roomCoverageResult}
+          onContinueAnyway={() => startRoomAnalysis()}
         />
       )}
 
@@ -968,7 +1026,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
   );
 }
 
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere, onRoomScanHere }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -1003,9 +1061,14 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
               galleryLabel="Galeriden Ekle"
             />
 
-            <button className="btn-outline" onClick={onScanHere} disabled={uploading}>
-              <CameraIcon style={{ width: 18, height: 18 }} /> Bu Odada Eşya Tara
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button className="btn-outline" onClick={onScanHere} disabled={uploading}>
+                <CameraIcon style={{ width: 18, height: 18 }} /> Bu Odada Eşya Tara
+              </button>
+              <button className="btn-outline" onClick={onRoomScanHere} disabled={uploading}>
+                <GridIcon style={{ width: 18, height: 18 }} /> Oda Taraması Yap
+              </button>
+            </div>
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
               <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 10 }}>Bu Odadaki Kararlar</div>
@@ -1073,7 +1136,7 @@ function ScanView({ title, onBack, onFile }) {
   );
 }
 
-function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze, error }) {
+function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, coverageChecking, coverageResult, onContinueAnyway }) {
   const canAddMore = photos.length < MAX_ROOM_PHOTOS;
   return (
     <section className="view">
@@ -1089,8 +1152,8 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze, er
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' }}>
             <GridIcon style={{ width: 36, height: 36, color: 'var(--text-muted)' }} strokeWidth="1.6" />
             <div className="muted" style={{ maxWidth: 280 }}>
-              Aynı odanın veya köşenin 1-{MAX_ROOM_PHOTOS} fotoğrafını ekle (farklı açılardan çekebilirsin),
-              yapay zeka hepsini birlikte değerlendirip öne çıkan eşyaları tek seferde listelesin.
+              Odanın olabildiğince genelini gösteren bir fotoğrafla başla — {ASSISTANT_NAME} yeterli olup olmadığına
+              bakıp gerekirse tek bir ek açı ister.
             </div>
           </div>
 
@@ -1124,15 +1187,31 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, onAnalyze, er
           )}
         </div>
 
+        {coverageChecking && (
+          <div className="thinking">
+            <div className="spinner" />
+            <div>{ASSISTANT_NAME} fotoğrafı kontrol ediyor...</div>
+          </div>
+        )}
+
+        {coverageResult && !coverageResult.sufficient && (
+          <div className="rec-banner" style={{ background: 'var(--terracotta-tint)' }}>
+            <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{coverageResult.reply}</div>
+            {coverageResult.requestedAngle && (
+              <div className="muted" style={{ fontSize: 12 }}>İstenen açı: {coverageResult.requestedAngle}</div>
+            )}
+          </div>
+        )}
+
         <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
-          AI'ın öne çıkan gördüğü eşyalar listelenir — sonra listeyi düzenleyebilirsin.
+          Bu kesin bir ölçüm değil — {ASSISTANT_NAME} sadece fotoğraflarda gördüğü kadarıyla değerlendiriyor.
         </div>
       </div>
 
       {photos.length > 0 && (
         <div className="decision-footer">
-          <button className="btn-primary" onClick={onAnalyze}>
-            Analiz Et ({photos.length} fotoğraf)
+          <button className="btn-primary" onClick={onContinueAnyway} disabled={coverageChecking}>
+            Bu Fotoğraflarla Devam Et
           </button>
         </div>
       )}
