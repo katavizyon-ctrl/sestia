@@ -1008,12 +1008,6 @@ export default function Page() {
   );
 }
 
-const WELCOME_STEPS = [
-  { icon: CameraIcon, label: 'Fotoğrafla' },
-  { icon: StarIcon, label: 'Öneriyi Gör' },
-  { icon: CheckIcon, label: 'Karar Ver' },
-];
-
 const welcomeInputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '13px 15px', borderRadius: 12,
   border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 15,
@@ -1108,35 +1102,9 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
       <div className="scroll center" style={{ paddingTop: onBack ? 8 : 40, gap: 22 }}>
         {stage === 'intro' && (
           <>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
-              <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: 0.5, textAlign: 'center' }}>BİR ODA. BİR EŞYA.</h1>
-              <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600, lineHeight: 1.4, maxWidth: 280 }}>
-                Yaşam alanını istediğin hâle getirelim mi?
-              </div>
-              <div className="muted" style={{ textAlign: 'center', fontSize: 14, lineHeight: 1.6, maxWidth: 280 }}>
-                Bir fotoğrafla başlayalım. Neyi değiştirmek istediğini konuşalım. Elindekileri birlikte
-                değerlendirip adım adım ilerleyelim.
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-              {WELCOME_STEPS.map((step, i) => (
-                <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                    <div className="flamewrap-compact"><step.icon style={{ width: 16, height: 16 }} /></div>
-                    <div style={{ fontSize: 11.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap' }}>{step.label}</div>
-                  </div>
-                  {i < WELCOME_STEPS.length - 1 && (
-                    <ChevronRightIcon style={{ width: 14, height: 14, color: 'var(--text-muted)', flexShrink: 0, marginBottom: 16 }} />
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <div style={{ fontSize: 19, fontWeight: 600 }}>Merhaba!</div>
-              <div style={{ fontSize: 19, fontWeight: 600 }}>Ben {ASSISTANT_NAME}.</div>
+              <h1 style={{ fontSize: 22, fontWeight: 700, textAlign: 'center' }}>Merhaba, ben {ASSISTANT_NAME}!</h1>
               <div className="muted" style={{ fontSize: 14, marginTop: 6 }}>Sana nasıl hitap etmemi istersin?</div>
             </div>
 
@@ -1159,7 +1127,10 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
         {stage === 'method' && (
           <>
             {name.trim() && (
-              <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600 }}>Memnun oldum, {name.trim()}.</div>
+              <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600 }}>Memnun oldum, {name.trim()}!</div>
+            )}
+            {status !== 'sent' && (
+              <div className="muted" style={{ textAlign: 'center', fontSize: 14 }}>Nasıl devam etmek istersin?</div>
             )}
 
             {status === 'sent' ? (
@@ -1196,10 +1167,10 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
                   ) : (
                     <div>
                       <button className="btn-primary" onClick={() => setShowEmailForm(true)} style={{ width: '100%' }}>
-                        E-posta ile devam et
+                        E-posta ile Devam Et
                       </button>
                       <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 6 }}>
-                        İlerlemeni koru ve farklı cihazlardan kaldığın yerden devam et.
+                        İlerlemeni koru, farklı cihazlardan kaldığın yerden devam et.
                       </div>
                     </div>
                   )

@@ -3,15 +3,24 @@ import { NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 
 export async function POST(req) {
-  const body = await req.json().catch(() => ({}));
-  const code = (body.code || '').toString();
-  const expected = process.env.ACCESS_CODE;
+  // Yerel gelistirmede (next dev -> NODE_ENV='development') paylasimli
+  // erisim kodu adimi atlaniyor — landing page'deki "Hadi Başlayalım"
+  // bu rotayi bos bir kodla cagiriyor. Bu blok SADECE NODE_ENV
+  // 'production' DEGILKEN calisir; gercek production build'inde
+  // (next build/next start -> NODE_ENV='production') asagidaki kod
+  // dogrulamasi HER ZAMAN, degismeden calisir.
+  const isLocalDev = process.env.NODE_ENV !== 'production';
+  if (!isLocalDev) {
+    const body = await req.json().catch(() => ({}));
+    const code = (body.code || '').toString();
+    const expected = process.env.ACCESS_CODE;
 
-  if (!expected) {
-    return NextResponse.json({ error: 'not_configured' }, { status: 500 });
-  }
-  if (code !== expected) {
-    return NextResponse.json({ error: 'wrong_code' }, { status: 401 });
+    if (!expected) {
+      return NextResponse.json({ error: 'not_configured' }, { status: 500 });
+    }
+    if (code !== expected) {
+      return NextResponse.json({ error: 'wrong_code' }, { status: 401 });
+    }
   }
 
   const res = NextResponse.json({ ok: true });
