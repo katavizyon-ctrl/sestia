@@ -15,7 +15,9 @@ export async function GET() {
   }
   const state = getState(identity.id);
   const homeMessage = getHomeMessage(identity.id);
-  // identityType: client'in "oturumu acik kullanicilara kullanici secim
-  // ekranini tekrar gostermeme" karari verebilmesi icin.
-  return NextResponse.json({ ...state, homeMessage, identityType: identity.type });
+  // identityType + identityId: client'in "kullanici secim ekranini tekrar
+  // gostermeme" kararini SADECE gecerli, tanidik bir kimlige gore verebilmesi
+  // icin (bkz. app/page.js — localStorage bayragi tek basina yeterli degil,
+  // cunku sunucu tarafi misafir kimligi sessizce degismis/sifirlanmis olabilir).
+  return NextResponse.json({ ...state, homeMessage, identityType: identity.type, identityId: identity.id });
 }

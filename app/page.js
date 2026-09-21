@@ -23,6 +23,7 @@ import {
 } from '@/components/icons';
 
 const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
+const SCAN_PERSIST_ERROR = 'Analiz odaya kaydedilemedi — bu oturumda görebilirsin ama sayfa yenilenirse kaybolabilir.';
 
 export default function Page() {
   const [view, setView] = useState('home');
@@ -31,6 +32,7 @@ export default function Page() {
   const [homeMessage, setHomeMessage] = useState(null);
   const [homeError, setHomeError] = useState(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [currentIdentityId, setCurrentIdentityId] = useState(null);
 
   // ---- tekli akış ----
   const [photoUrl, setPhotoUrl] = useState(null);
@@ -112,15 +114,26 @@ export default function Page() {
       setHomeState(data);
       setHomeMessage(data.homeMessage || null);
       setHomeError(null);
+      setCurrentIdentityId(data.identityId || null);
       if (isInitial) {
-        // Oturumu acik (hesapli) kullaniciya secim ekrani hic gosterilmez.
-        // Misafir icin de, bir kere secim yapinca (e-posta ile devam et ya
-        // da misafir olarak dene) bir daha sorulmaz — bkz. WelcomeView.
-        let alreadyChosen = false;
+        // Oturumu acik (hesapli) kullaniciya secim ekrani hic gosterilmez —
+        // bu, Auth.js'in kriptografik olarak dogruladigi bir sunucu
+        // kanitidir, localStorage'a ihtiyac yok.
+        //
+        // Misafir icin localStorage bayragi TEK BASINA yeterli degil: bayrak
+        // tarayicida dururken sunucu tarafindaki misafir kimligi (guest_session)
+        // silinmis/suresi gecmis/degismis olabilir — proxy.js boyle bir
+        // durumda SESSIZCE yepyeni, bos bir misafir kimligi uretir. Bayrak
+        // hala varsa kullanici eski odalarina erisecegini sanip aslinda
+        // bomboş yeni bir kimlikle devam eder. Bunu onlemek icin bayragi,
+        // secimi yaptigi ANDAKI misafir kimlik id'siyle birlikte saklıyoruz;
+        // burada da SADECE o id hala GECERLI kimlikle eslesiyorsa atliyoruz.
+        let confirmedGuestId = null;
         try {
-          alreadyChosen = localStorage.getItem('sestia_chose_path') === '1';
+          confirmedGuestId = localStorage.getItem('sestia_guest_id_confirmed');
         } catch {}
-        if (data.identityType !== 'account' && !alreadyChosen) setShowWelcome(true);
+        const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId;
+        if (data.identityType !== 'account' && !isKnownGuest) setShowWelcome(true);
       }
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
@@ -228,7 +241,8 @@ export default function Page() {
 
   // Bir odanin icinden baslatilan taramalarda kullanilan fotograflari da
   // odanin kalici galerisine kaydeder — sessizce (en iyi caba), kullanici
-  // akisini bloklamaz/bekletmez.
+  // akisini bloklamaz/bekletmez. (Tek-esya akisi icin: bu tek fotografin
+  // kaderi zaten karar onayina bagli, ayrica erken kaydetme gerekmiyor.)
   function persistPhotosToActiveRoom(files) {
     const roomId = activeRoomRef.current?.id;
     if (!roomId) return;
@@ -237,6 +251,63 @@ export default function Page() {
       fd.append('photo', file, 'photo.jpg');
       fetch(`/api/rooms/${roomId}/photos`, { method: 'POST', body: fd }).catch(() => {});
     });
+  }
+
+  // Oda taramasinda fotograflar EKLENIR EKLENMEZ (karar verilmesini
+  // beklemeden) kalici galeriye yazilir — analiz/karar akisindan bagimsiz.
+  // Basarisizlik sessizce yutulmuyor: kullaniciya acikca bildiriliyor.
+  // Zaten eklenmis fotograflari TEKRAR yuklemez — sadece yeni dosyalar
+  // parametre olarak gelir (bkz. addRoomPhotos).
+  async function persistNewRoomScanPhotos(files) {
+    const roomId = activeRoomRef.current?.id;
+    if (!roomId || files.length === 0) return;
+    try {
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('photo', file, 'photo.jpg');
+        const res = await fetch(`/api/rooms/${roomId}/photos`, { method: 'POST', body: fd });
+        if (!res.ok) throw new Error('persist_failed');
+      }
+    } catch {
+      setRoomError('Bazı fotoğraflar odaya kaydedilemedi. Bağlantını kontrol edip tekrar dener misin?');
+    }
+  }
+
+  // Tamamlanan analizi (esya listesi + sohbet gecmisi) odaya kaydeder —
+  // karar verilmesini beklemeden. Sadece bir odanin icinden baslatilmis
+  // taramalarda anlamli (activeRoomRef yoksa no-op).
+  async function persistRoomScanIfActive(items, messages) {
+    const roomId = activeRoomRef.current?.id;
+    if (!roomId) return;
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, messages }),
+      });
+      if (!res.ok) throw new Error('scan_persist_failed');
+      setRoomError((current) => (current === SCAN_PERSIST_ERROR ? null : current));
+    } catch {
+      setRoomError(SCAN_PERSIST_ERROR);
+    }
+  }
+
+  // Odaya daha once kaydedilmis (karar verilmemis) bir taramaya geri
+  // doner — kullanici hic karar vermeden cikip donmus olabilir.
+  function resumeRoomScan() {
+    if (!roomDetail?.scan) return;
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    roomSessionRef.current += 1;
+    roomFilesRef.current = []; // fotograflar sadece odanin galerisinde; sohbete devam icin yeniden gonderilecek dosya yok
+    setRoomPhotos((current) => {
+      current.forEach((p) => URL.revokeObjectURL(p.url));
+      return roomDetail.photos.map((p) => ({ id: p.id, url: `/api/rooms/${roomDetail.id}/photos/${p.id}` }));
+    });
+    setRoomItems(roomDetail.scan.items);
+    setRoomMessages(roomDetail.scan.messages);
+    setRoomAnalyzing(false);
+    setRoomError(null);
+    setView('room-review');
   }
 
   function finishCelebration() {
@@ -465,7 +536,12 @@ export default function Page() {
         ? `${oversizedCount} fotoğraf çok büyük olduğu için eklenemedi (20 MB sınırı).`
         : null
     );
-    if (newEntries.length > 0) checkRoomPhotoCoverage(updated);
+    if (newEntries.length > 0) {
+      // Kapsam kontrolu ve kalici kayit birbirinden BAGIMSIZ — biri
+      // basarisiz olsa da digerini engellemez, birbirini beklemez.
+      checkRoomPhotoCoverage(updated);
+      persistNewRoomScanPhotos(newEntries.map((p) => p.file));
+    }
   }
 
   function removeRoomPhoto(id) {
@@ -527,11 +603,14 @@ export default function Page() {
       if (!res.ok) throw new Error('analyze_failed');
       const data = await res.json();
       if (session !== roomSessionRef.current) return;
-      setRoomItems(data.items.map((item) => ({ ...item, excluded: false, manual: false })));
+      const nextItems = data.items.map((item) => ({ ...item, excluded: false, manual: false }));
+      setRoomItems(nextItems);
       setRoomMessages(data.messages);
       logEvent('ai_suggestion_shown', {
         items: data.items.map((item) => ({ category: item.category, recommendation: item.recommendation })),
       });
+      // Analiz, karar verilmesini beklemeden odaya kaydedilir.
+      persistRoomScanIfActive(nextItems, data.messages);
     } catch {
       if (session !== roomSessionRef.current || controller.signal.aborted) return;
       setRoomError('Analiz sırasında bir sorun oluştu. Farklı fotoğraflarla tekrar dener misin?');
@@ -562,19 +641,20 @@ export default function Page() {
       if (!res.ok) throw new Error('room_chat_failed');
       const result = await res.json();
       if (session !== roomSessionRef.current) return;
-      setRoomItems(current => {
-        const currentIds = new Set(current.map(item => item.id));
-        const merged = current.map(item => {
-          const updated = result.items.find(candidate => candidate.id === item.id);
-          return item.manual || item.excluded || !updated ? item : { ...item, ...updated };
-        });
-        const added = result.items
-          .filter(item => !currentIds.has(item.id))
-          .map(item => ({ ...item, excluded: false, manual: false }));
-        return [...merged, ...added];
+      const currentIds = new Set(roomItems.map(item => item.id));
+      const merged = roomItems.map(item => {
+        const updated = result.items.find(candidate => candidate.id === item.id);
+        return item.manual || item.excluded || !updated ? item : { ...item, ...updated };
       });
+      const added = result.items
+        .filter(item => !currentIds.has(item.id))
+        .map(item => ({ ...item, excluded: false, manual: false }));
+      const finalItems = [...merged, ...added];
+      setRoomItems(finalItems);
       setRoomMessages(result.messages);
       setRoomChatDraft('');
+      // Analiz, karar verilmesini beklemeden odaya kaydedilir.
+      persistRoomScanIfActive(finalItems, result.messages);
     } catch {
       if (session !== roomSessionRef.current || controller.signal.aborted) return;
       setRoomChatError('Yanıt alınamadı. Mesajını tekrar gönderebilir veya mevcut kararlarınla devam edebilirsin.');
@@ -623,7 +703,11 @@ export default function Page() {
           source: 'oda',
         });
       });
-      persistPhotosToActiveRoom(roomFilesRef.current);
+      // Fotograflar zaten eklendikce kaydedilmisti (bkz. persistNewRoomScanPhotos).
+      // Karar verildigine gore bekleyen tarama artik gereksiz — temizle.
+      if (activeRoomRef.current?.id) {
+        fetch(`/api/rooms/${activeRoomRef.current.id}/scan`, { method: 'DELETE' }).catch(() => {});
+      }
       setCelebration({
         streak: state.streak,
         pointsGained: included.length * 5,
@@ -646,7 +730,7 @@ export default function Page() {
     <div className="app">
       {view === 'home' && (
         showWelcome ? (
-          <WelcomeView onGuestStart={() => setShowWelcome(false)} />
+          <WelcomeView onGuestStart={() => setShowWelcome(false)} currentIdentityId={currentIdentityId} />
         ) : (
           <HomeView
             homeState={homeState}
@@ -682,6 +766,7 @@ export default function Page() {
           onAddPhoto={handleRoomPhotoUpload}
           onScanHere={startScanInRoom}
           onRoomScanHere={startRoomScanInRoom}
+          onResumeScan={resumeRoomScan}
         />
       )}
 
@@ -751,6 +836,7 @@ export default function Page() {
           chatBusy={roomChatBusy}
           chatError={roomChatError}
           onSendChat={sendRoomChat}
+          chatDisabled={roomFilesRef.current.length === 0}
         />
       )}
 
@@ -779,15 +865,11 @@ const welcomeInputStyle = {
   border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 15,
 };
 
-function WelcomeView({ onGuestStart }) {
+function WelcomeView({ onGuestStart, currentIdentityId }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState(null); // null | 'not_configured' | 'sent' | 'error'
-
-  function markChosen() {
-    try { localStorage.setItem('sestia_chose_path', '1'); } catch {}
-  }
 
   async function submitEmail(e) {
     e.preventDefault();
@@ -817,7 +899,11 @@ function WelcomeView({ onGuestStart }) {
         body: new URLSearchParams({ email: cleanEmail, csrfToken, callbackUrl: '/', json: 'true' }),
       });
       if (!signinRes.ok) throw new Error('signin_failed');
-      markChosen();
+      // Burada "secildi" bayragi bilerek basmiyoruz: bu adimda kullanici
+      // henuz dogrulanmadi, hala misafir. Dogrulama tamamlaninca gercek
+      // hesap oturumu (identityType==='account') zaten sunucu tarafinda
+      // kanitlanmis oluyor ve secim ekrani onun icin ayrica hic
+      // gosterilmiyor (localStorage'a bagimli degil).
       setStatus('sent');
     } catch {
       setStatus('error');
@@ -827,7 +913,12 @@ function WelcomeView({ onGuestStart }) {
   }
 
   function chooseGuest() {
-    markChosen();
+    // Bayragi, TAM OLARAK su an gecerli olan misafir kimlik id'siyle
+    // damgaliyoruz — ileride bu kimlik sessizce degisirse (silinme/sifirlanma)
+    // bayrak artik eslesmeyecegi icin otomatik gecersiz sayilir.
+    try {
+      if (currentIdentityId) localStorage.setItem('sestia_guest_id_confirmed', currentIdentityId);
+    } catch {}
     onGuestStart();
   }
 
@@ -837,9 +928,12 @@ function WelcomeView({ onGuestStart }) {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
           <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
           <h1 style={{ fontSize: 26, fontWeight: 600, textAlign: 'center' }}>Merhaba, ben {ASSISTANT_NAME}.</h1>
-          <div className="muted" style={{ textAlign: 'center', fontSize: 14.5, lineHeight: 1.6, maxWidth: 280 }}>
-            Evinde nefes alabiliyor musun?<br />
-            Birlikte, adım adım nefes alacak yer açalım.
+          <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600, lineHeight: 1.4, maxWidth: 280 }}>
+            Yaşam alanını istediğin hâle getirelim.
+          </div>
+          <div className="muted" style={{ textAlign: 'center', fontSize: 14, lineHeight: 1.6, maxWidth: 280 }}>
+            Bir fotoğrafla başlayalım. Neyi değiştirmek istediğini konuşalım. Elindekileri birlikte
+            değerlendirip adım adım ilerleyelim.
           </div>
         </div>
 
@@ -1130,7 +1224,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
   );
 }
 
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere, onRoomScanHere }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onScanHere, onRoomScanHere, onResumeScan }) {
   return (
     <section className="view">
       <div className="scroll">
@@ -1155,6 +1249,16 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                     <img src={`/api/rooms/${room.id}/photos/${photo.id}`} alt="" />
                   </div>
                 ))}
+              </div>
+            )}
+
+            {room.scan && (
+              <div className="card" style={{ background: 'var(--eucalyptus-tint)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Yarım kalan bir tarama var</div>
+                <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.4 }}>
+                  {room.scan.items.length} eşya için analiz tamamlandı ama henüz karar vermedin.
+                </div>
+                <button className="btn-primary" onClick={onResumeScan}>Taramaya Devam Et</button>
               </div>
             )}
 
@@ -1447,7 +1551,7 @@ function DecisionView({
 }
 
 function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSetRec, onBack, onConfirm, confirming,
-  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat }) {
+  messages, chatDraft, onChatDraft, chatBusy, chatError, onSendChat, chatDisabled }) {
   const includedCount = items.filter((it) => !it.excluded).length;
   const chatHistoryRef = useRef(null);
   useEffect(() => {
@@ -1489,18 +1593,27 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
                 return text ? <p key={index} className={`chat-message chat-${message.role}`}><span className="chat-speaker">{reply ? 'Asistan' : 'Sen'}</span>{text}</p> : null;
               })}
             </div>
-            <form onSubmit={onSendChat} className="chat-form">
-              <label htmlFor="room-chat">Oda veya eşyalar hakkında eklemek istediğin bir şey var mı?</label>
-              <textarea id="room-chat" rows={2} maxLength={2000} value={chatDraft}
-                onChange={e => onChatDraft(e.target.value)} placeholder="İstersen yaz..."
-                disabled={chatBusy || confirming || messages.length >= 42} />
-              <button className="btn-outline" type="submit" disabled={!chatDraft.trim() || chatBusy || confirming || messages.length >= 42}>
-                {chatBusy ? 'Değerlendiriliyor...' : 'Gönder'}
-              </button>
-            </form>
-            {chatBusy && <div role="status" className="muted">Odadaki öneriler güncelleniyor...</div>}
-            {chatError && <div role="alert" className="errbox">{chatError}</div>}
-            {messages.length >= 42 && <div className="muted">Bu oda için sohbet sınırına ulaştın. Kararlarını seçip devam edebilirsin.</div>}
+            {chatDisabled ? (
+              <div className="muted" style={{ fontSize: 12.5 }}>
+                Bu, daha önce kaydedilmiş bir tarama — sohbete devam etmek için fotoğraflar yeniden gerekiyor.
+                İstersen mevcut önerilerle kararlarını verebilirsin.
+              </div>
+            ) : (
+              <>
+                <form onSubmit={onSendChat} className="chat-form">
+                  <label htmlFor="room-chat">Oda veya eşyalar hakkında eklemek istediğin bir şey var mı?</label>
+                  <textarea id="room-chat" rows={2} maxLength={2000} value={chatDraft}
+                    onChange={e => onChatDraft(e.target.value)} placeholder="İstersen yaz..."
+                    disabled={chatBusy || confirming || messages.length >= 42} />
+                  <button className="btn-outline" type="submit" disabled={!chatDraft.trim() || chatBusy || confirming || messages.length >= 42}>
+                    {chatBusy ? 'Değerlendiriliyor...' : 'Gönder'}
+                  </button>
+                </form>
+                {chatBusy && <div role="status" className="muted">Odadaki öneriler güncelleniyor...</div>}
+                {chatError && <div role="alert" className="errbox">{chatError}</div>}
+                {messages.length >= 42 && <div className="muted">Bu oda için sohbet sınırına ulaştın. Kararlarını seçip devam edebilirsin.</div>}
+              </>
+            )}
           </section>
         )}
 
