@@ -156,11 +156,22 @@ export default function Page() {
         // bomboş yeni bir kimlikle devam eder. Bunu onlemek icin bayragi,
         // secimi yaptigi ANDAKI misafir kimlik id'siyle birlikte saklıyoruz;
         // burada da SADECE o id hala GECERLI kimlikle eslesiyorsa atliyoruz.
+        //
+        // AYRICA: "onaylanmis misafir" tek basina "tanisma tamamlandi"
+        // ANLAMINA GELMEZ. sestia_guest_id_confirmed, bu akista isim/hitap
+        // sorusu eklenmeden ONCE de ayni sekilde damgalaniyordu — yani bu
+        // bayrak eslesse bile, o kimlik icin hic isim kaydedilmemis olabilir
+        // (ör. eski bir test oturumu, ya da isim farkli bir kimlige
+        // damgalanmis). Boyle bir "yari tanismis" misafiri sessizce ana
+        // ekrana gecirmek yerine — mevcut verisini (oda/karar) HIC
+        // silmeden/sifirlamadan — tanisma akisini (sadece hitap sorusunu)
+        // tekrar gosteriyoruz. bkz. lib/client.js getUserName.
         let confirmedGuestId = null;
         try {
           confirmedGuestId = localStorage.getItem('sestia_guest_id_confirmed');
         } catch {}
-        const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId;
+        const hasName = data.identityType === 'guest' && Boolean(getUserName(data.identityId));
+        const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId && hasName;
         if (data.identityType !== 'account' && !isKnownGuest) setShowWelcome(true);
       }
     } catch {
