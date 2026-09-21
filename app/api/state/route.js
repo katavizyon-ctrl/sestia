@@ -15,5 +15,7 @@ export async function GET() {
   }
   const state = getState(identity.id);
   const homeMessage = getHomeMessage(identity.id);
-  return NextResponse.json({ ...state, homeMessage });
+  // identityType: client'in "oturumu acik kullanicilara kullanici secim
+  // ekranini tekrar gostermeme" karari verebilmesi icin.
+  return NextResponse.json({ ...state, homeMessage, identityType: identity.type });
 }
