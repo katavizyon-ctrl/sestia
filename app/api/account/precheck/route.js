@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import rawDb, { setPendingSignupName } from '@/lib/db';
 import { authUser } from '@/lib/authSchema';
+import { isEmailReady } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -45,10 +46,10 @@ export async function POST(req) {
         return NextResponse.json({ error: 'name_required' }, { status: 400 });
       }
       setPendingSignupName(email, name);
-      // Resend henuz kurulmadiysa (RESEND_API_KEY yok) client'a acikca
-      // soyle — e-posta gonderimi calisiyormus gibi davranip gercek
-      // signIn() cagrisini tetiklemesin.
-      return NextResponse.json({ ok: true, emailReady: Boolean(process.env.RESEND_API_KEY) });
+      // Resend henuz kurulmadiysa (RESEND_API_KEY VEYA AUTH_EMAIL_FROM
+      // eksikse) client'a acikca soyle — e-posta gonderimi calisiyormus
+      // gibi davranip gercek signIn() cagrisini tetiklemesin.
+      return NextResponse.json({ ok: true, emailReady: isEmailReady() });
     }
 
     const existing = await drizzleDb.select({ id: authUser.id }).from(authUser).where(eq(authUser.email, email)).get();

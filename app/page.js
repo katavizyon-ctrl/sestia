@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { compressImage, getLastRoom, setLastRoom, getUserName } from '@/lib/client';
+import { compressImage, getLastRoom, setLastRoom, getUserName, setUserName } from '@/lib/client';
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES, ASSISTANT_NAME } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
@@ -44,6 +44,7 @@ export default function Page() {
   const [homeError, setHomeError] = useState(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [currentIdentityId, setCurrentIdentityId] = useState(null);
+  const [identityType, setIdentityType] = useState(null);
 
   // ---- tekli akış ----
   const [photoUrl, setPhotoUrl] = useState(null);
@@ -136,6 +137,7 @@ export default function Page() {
       setHomeMessage(data.homeMessage || null);
       setHomeError(null);
       setCurrentIdentityId(data.identityId || null);
+      setIdentityType(data.identityType || null);
       if (isInitial) {
         // Oturumu acik (hesapli) kullaniciya secim ekrani hic gosterilmez —
         // bu, Auth.js'in kriptografik olarak dogruladigi bir sunucu
@@ -165,7 +167,13 @@ export default function Page() {
     if ((view === 'room-scan' || view === 'room-review') && name !== view) resetRoomScan();
     if (name === 'scan') resetSingleScan();
     if (name === 'room-scan') resetRoomScan();
-    if (name === 'home') { activeRoomRef.current = null; refreshHomeState(); }
+    if (name === 'home') {
+      activeRoomRef.current = null;
+      refreshHomeState();
+      // Misafir ismi hesap ekranindan doner dönmez tazelenir — localStorage
+      // WelcomeView icinde yazildiginda bu state otomatik guncellenmiyordu.
+      setUserNameState(getUserName());
+    }
     if (name === 'inspiration') loadInspiration();
     if (name === 'rooms') { activeRoomRef.current = null; loadRooms(); }
     setView(name);
@@ -831,18 +839,35 @@ export default function Page() {
     <div className="app">
       {view === 'home' && (
         showWelcome ? (
-          <WelcomeView onGuestStart={() => setShowWelcome(false)} currentIdentityId={currentIdentityId} />
+          <WelcomeView
+            onGuestStart={() => setShowWelcome(false)}
+            currentIdentityId={currentIdentityId}
+            emailReady={homeState.emailReady}
+          />
         ) : (
           <HomeView
             homeState={homeState}
             homeMessage={homeMessage}
             homeError={homeError}
+            identityType={identityType}
+            userName={identityType === 'account' ? homeState.name : userName}
             onScanSingle={() => selectMode('tek_esya')}
             onScanRoom={() => selectMode('oda_tarama')}
             onOpenInspiration={() => goTo('inspiration')}
             onOpenRooms={() => goTo('rooms')}
+            onOpenAccount={() => goTo('account')}
           />
         )
+      )}
+
+      {view === 'account' && (
+        <WelcomeView
+          onGuestStart={() => goTo('home')}
+          currentIdentityId={currentIdentityId}
+          emailReady={homeState.emailReady}
+          alreadyGuest
+          onBack={() => goTo('home')}
+        />
       )}
 
       {view === 'rooms' && (
@@ -986,17 +1011,25 @@ const welcomeInputStyle = {
   border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 15,
 };
 
-function WelcomeView({ onGuestStart, currentIdentityId }) {
-  const [name, setName] = useState('');
+function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest, onBack }) {
+  const [name, setName] = useState(() => getUserName() || '');
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState(null); // null | 'not_configured' | 'sent' | 'error'
+
+  // Isim, e-posta/hesap akisindan BAGIMSIZ olarak yerel olarak saklanir —
+  // Resend hazir olmasa bile misafir kisisellestirmesi calissin diye.
+  function saveNameLocally() {
+    const cleanName = name.trim();
+    if (cleanName) setUserName(cleanName);
+  }
 
   async function submitEmail(e) {
     e.preventDefault();
     const cleanName = name.trim();
     const cleanEmail = email.trim();
     if (!cleanName || !cleanEmail || submitting) return;
+    saveNameLocally();
     setSubmitting(true);
     setStatus(null);
     try {
@@ -1045,7 +1078,12 @@ function WelcomeView({ onGuestStart, currentIdentityId }) {
 
   return (
     <section className="view">
-      <div className="scroll center" style={{ paddingTop: 40, gap: 22 }}>
+      {onBack && (
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
+        </div>
+      )}
+      <div className="scroll center" style={{ paddingTop: onBack ? 8 : 40, gap: 22 }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
           <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
           <h1 style={{ fontSize: 26, fontWeight: 600, textAlign: 'center' }}>Merhaba, ben {ASSISTANT_NAME}.</h1>
@@ -1085,47 +1123,59 @@ function WelcomeView({ onGuestStart, currentIdentityId }) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onBlur={saveNameLocally}
               placeholder="Sana nasıl hitap edelim?"
               maxLength={60}
               disabled={submitting}
               style={welcomeInputStyle}
             />
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="ornek@email.com"
-              disabled={submitting}
-              style={welcomeInputStyle}
-            />
-            {status === 'not_configured' && (
-              <div className="errbox">
-                E-posta ile giriş şimdilik hazır değil (Resend henüz bağlanmadı) — misafir olarak devam edebilirsin.
+            {emailReady ? (
+              <>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="ornek@email.com"
+                  disabled={submitting}
+                  style={welcomeInputStyle}
+                />
+                {status === 'not_configured' && (
+                  <div className="errbox">
+                    E-posta ile giriş şimdilik hazır değil — misafir olarak devam edebilirsin.
+                  </div>
+                )}
+                {status === 'error' && <div className="errbox">Bir sorun oldu, tekrar dener misin?</div>}
+                <button className="btn-primary" type="submit" disabled={!name.trim() || !email.trim() || submitting}>
+                  {submitting ? 'Gönderiliyor...' : 'E-posta ile Devam Et'}
+                </button>
+              </>
+            ) : (
+              <div className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>
+                E-posta ile giriş yakında burada olacak.
               </div>
             )}
-            {status === 'error' && <div className="errbox">Bir sorun oldu, tekrar dener misin?</div>}
-            <button className="btn-primary" type="submit" disabled={!name.trim() || !email.trim() || submitting}>
-              {submitting ? 'Gönderiliyor...' : 'E-posta ile Devam Et'}
-            </button>
           </form>
         )}
 
-        <button className="btn-secondary" onClick={chooseGuest}>Misafir Olarak Dene</button>
-        <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', maxWidth: 260 }}>
-          Misafir olarak devam edersen kararların bu cihazda kalır; daha sonra hesap açarsan otomatik olarak aktarılmaz.
-        </div>
+        {!alreadyGuest && (
+          <>
+            <button className="btn-secondary" onClick={chooseGuest}>Misafir Olarak Dene</button>
+            <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', maxWidth: 260 }}>
+              Misafir olarak devam edersen kararların bu cihazda kalır; daha sonra hesap açarsan otomatik olarak aktarılmaz.
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
 }
 
-function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom, onOpenInspiration, onOpenRooms }) {
+function HomeView({ homeState, homeMessage, homeError, identityType, userName, onScanSingle, onScanRoom, onOpenInspiration, onOpenRooms, onOpenAccount }) {
   return (
     <section className="view">
       <div className="scroll">
         <div>
-          <div className="muted" style={{ fontWeight: 500 }}>Günaydın</div>
-          <h1 style={{ fontSize: 28, fontWeight: 600 }}>Sen</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 600 }}>{userName ? `Merhaba, ${userName}.` : 'Merhaba.'}</h1>
         </div>
 
         <button
@@ -1203,6 +1253,22 @@ function HomeView({ homeState, homeMessage, homeError, onScanSingle, onScanRoom,
         </div>
 
         {homeError && <div className="errbox">{homeError}</div>}
+
+        {identityType !== 'account' && (
+          <button
+            className="card"
+            style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
+            onClick={onOpenAccount}
+          >
+            <div className="flamewrap-compact"><CheckIcon style={{ width: 18, height: 18 }} /></div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>İlerlemeni koru.</div>
+              <div className="muted">Odalarına ve kararlarına diğer cihazlarından da eriş.</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 4 }}>Hesap oluştur veya giriş yap</div>
+            </div>
+            <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+          </button>
+        )}
       </div>
     </section>
   );
