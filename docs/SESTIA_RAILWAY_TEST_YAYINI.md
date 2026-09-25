@@ -33,8 +33,18 @@ Yerel Anthropic, Resend ve davet/yönetici kodları gizli Railway değişkenleri
 
 Tekrarlanabilir kontrol: `node tests/staging-smoke.cjs`; isteğe bağlı `--chat` ve `--analysis`. Yeniden başlatma sonrası `--resume` aynı test kimliği ve fotoğrafı kontrol eder. Bu betik yalnızca belirtilen staging adresine istek gönderir; `npm test` içinde otomatik çalışmaz. Geçici oturum dosyası sistemin TEMP klasöründedir ve Git'e alınmaz.
 
+## Yalnızca sahibine açık mod
+
+Kullanıcının sonraki talebiyle `PRIVATE_OWNER_EMAIL` ayarı onaylanan tek e-posta adresine sabitlendi. `/ozel-giris` üzerinden Resend bağlantısıyla giriş yapılır. Proxy, Auth.js'in şifreli oturumunu ve e-posta eşleşmesini doğrular; API kimlik katmanı da misafir erişimini reddeder. Auth.js `signIn` kontrolü hem bağlantı gönderiminden önce hem bağlantı kullanılırken farklı e-postaları reddeder. Yönetim ekranı da aynı sahip oturumuna bağlıdır.
+
+Eski davet/yönetici kodları ve `AUTH_SECRET` değiştirildi. Yeni yedek kodlar yerelde Git dışında `.env.staging-private` dosyasındadır; özel modda bu kodlar giriş sağlamaz. Genel erişime açmak ayrı bir işlem gerektirir.
+
+Bu, internete kapalı bir ağ değildir: HTTPS giriş sayfası görülebilir; uygulama ve kullanıcı verileri yalnızca doğrulanmış sahibine açıktır. `noindex` başlıkları eklenmiştir. Resend değişkenlerinin varlığı doğrulandı; test e-postası gönderilmedi.
+
+Özel mod kontrolü: `node tests/private-staging-smoke.cjs`. Önceki misafir smoke betiği bu modda bilerek reddedilir. Yerel test sayısı 81; üretim derlemesi başarılı.
+
 ## Açık kalanlar
 
-- E-posta göndermek için kullanıcıdan hedef adres istendi; teslimat ve bağlantıyla giriş henüz doğrulanmadı.
+- Kullanıcı Resend yapılandırmasının önce kontrol edilmesini istedi. Ayarlar mevcut; gerçek e-posta teslimatı ve sahibinin bağlantıyla giriş yapması henüz doğrulanmadı.
 - Günlük disk yedekleme isteği Railway API tarafından `Not Authorized` ile reddedildi. Otomatik yedekleme etkin değildir; hesap/plan yetkisi Railway panelinden çözülmeli. Ücretli plan değişikliği yapılmadı. Kalıcı disk, silinme veya bozulmaya karşı yedek yerine geçmez.
 - Bu adres test yayınıdır. Üretime geçiş öncesi e-posta, yedekleme/geri yükleme ve gerçek kullanıcı kabul kontrolleri tamamlanmalıdır.

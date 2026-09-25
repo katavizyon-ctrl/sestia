@@ -1,11 +1,34 @@
 import { NextResponse } from 'next/server';
 import { GUEST_COOKIE, createGuestToken, verifyGuestToken } from '@/lib/guestToken';
 import accessTokens from '@/lib/accessToken.cjs';
+import { getToken } from 'next-auth/jwt';
+import privateAccess from '@/lib/privateAccess.cjs';
 
 const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/health'];
 
-export function proxy(req) {
+export async function proxy(req) {
   const { pathname } = req.nextUrl;
+
+  if (privateAccess.privateOwner()) {
+    let response;
+    if (pathname === '/ozel-giris' || pathname === '/api/health' || pathname.startsWith('/api/auth/')) {
+      response = NextResponse.next();
+    } else {
+      // Decode the same encrypted Auth.js JWT; never trust client-side profile data.
+      const token = await getToken({ req, secret: process.env.AUTH_SECRET,
+        secureCookie: process.env.NODE_ENV === 'production' });
+      if (token?.sub && privateAccess.isAllowedEmail(token.email)) {
+        response = NextResponse.next();
+      } else if (pathname.startsWith('/api/')) {
+        response = NextResponse.json({ error: 'private_access_required' }, { status: 401 });
+      } else {
+        response = NextResponse.redirect(new URL('/ozel-giris', req.url));
+      }
+    }
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    response.headers.set('Cache-Control', 'private, no-store');
+    return response;
+  }
 
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
 
