@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import accessTokens from '@/lib/accessToken.cjs';
 
 export const runtime = 'nodejs';
 
@@ -24,7 +25,7 @@ export async function POST(req) {
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set('access_ok', '1', {
+  res.cookies.set('access_ok', accessTokens.createAccessToken('access'), {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',

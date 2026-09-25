@@ -8,7 +8,8 @@ test('changed application files compile without executing DB or calling services
   for (const file of ['app/page.js', 'lib/db.js', 'lib/anthropic.js',
     'components/SestiaExperience.js', 'app/hosgeldin/page.js', 'app/giris/page.js',
     'app/admin-giris/page.js', 'app/admin/page.js', 'app/error.js', 'app/layout.js',
-    'app/api/decide/route.js', 'app/api/rooms/[id]/scan/route.js']) {
+    'app/api/decide/route.js', 'app/api/rooms/[id]/scan/route.js', 'proxy.js',
+    'app/api/access/route.js', 'app/api/admin-access/route.js', 'app/api/health/route.js']) {
     await swc.transform(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), {
       filename: file,
       jsc: { parser: { syntax: 'ecmascript', jsx: true }, target: 'es2022' },

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { GUEST_COOKIE, createGuestToken, verifyGuestToken } from '@/lib/guestToken';
+import accessTokens from '@/lib/accessToken.cjs';
 
-const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access'];
+const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/health'];
 
 export function proxy(req) {
   const { pathname } = req.nextUrl;
@@ -16,7 +17,7 @@ export function proxy(req) {
   if (pathname.startsWith('/api/auth/')) return NextResponse.next();
 
   if (pathname === '/admin' || pathname.startsWith('/api/admin')) {
-    const adminOk = req.cookies.get('admin_ok')?.value === '1';
+    const adminOk = accessTokens.verifyAccessToken(req.cookies.get('admin_ok')?.value, 'admin');
     if (!adminOk) {
       if (pathname.startsWith('/api/admin')) {
         return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -28,7 +29,7 @@ export function proxy(req) {
     return NextResponse.next();
   }
 
-  const accessOk = req.cookies.get('access_ok')?.value === '1';
+  const accessOk = accessTokens.verifyAccessToken(req.cookies.get('access_ok')?.value, 'access');
   if (!accessOk) {
     if (pathname.startsWith('/api')) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
