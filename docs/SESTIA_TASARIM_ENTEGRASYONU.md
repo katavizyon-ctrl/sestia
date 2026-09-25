@@ -34,4 +34,4 @@ Yerel uygulama: `http://127.0.0.1:3002/hosgeldin`.
 Başlatma: `npm run dev -- --webpack --hostname 127.0.0.1 --port 3002`.
 İzole önizleme yardımcısı: `node tests/preview-isolated.cjs` (ayrı geçici klasör, boş veritabanı, gerçek servis anahtarı yok).
 
-GitHub’a gönderim veya Railway yayını yapılmadı.
+İlk entegrasyon sırasında yayın yapılmamıştı. Sonraki aşamada özel GitHub deposu ve Railway test yayını kuruldu; güncel durum `SESTIA_RAILWAY_TEST_YAYINI.md` belgesindedir.
