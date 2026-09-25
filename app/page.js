@@ -5,6 +5,7 @@ import { compressImage, getLastRoom, setLastRoom, getUserName, setUserName } fro
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES, ASSISTANT_NAME } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
+import { Brand, Header, PageHeading, MainNavigation, HomeDashboard, DiscoverView, ChooseView, SestiaChat, RoomCover } from '@/components/SestiaExperience';
 import roomItemSources from '@/lib/roomItemSources.cjs';
 import roomScanClient from '@/lib/roomScanClient.cjs';
 import {
@@ -40,6 +41,8 @@ function formatAnalysisDate(sqliteUtc) {
 
 export default function Page() {
   const [view, setView] = useState('home');
+  const [chatContext, setChatContext] = useState(null);
+  const [identityLoaded, setIdentityLoaded] = useState(false);
 
   const [homeState, setHomeState] = useState({ streak: 0, points: 0, totalDecisions: 0 });
   const [homeMessage, setHomeMessage] = useState(null);
@@ -210,13 +213,24 @@ export default function Page() {
         try {
           confirmedGuestId = localStorage.getItem('sestia_guest_id_confirmed');
         } catch {}
-        const hasName = data.identityType === 'guest' && Boolean(getUserName(data.identityId));
+        let skippedName = false;
+        try { skippedName = localStorage.getItem('sestia_intro_skipped') === data.identityId; } catch {}
+        const hasName = data.identityType === 'guest' && (Boolean(getUserName(data.identityId)) || skippedName);
         const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId && hasName;
         if (data.identityType !== 'account' && !isKnownGuest) setShowWelcome(true);
       }
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
+    } finally {
+      setIdentityLoaded(true);
     }
+  }
+
+  useEffect(() => { if (currentIdentityId) loadRooms(); }, [currentIdentityId]);
+
+  function openSestiaChat(context) {
+    setChatContext(context);
+    goTo('chat');
   }
 
   function goTo(name) {
@@ -232,6 +246,7 @@ export default function Page() {
     if (name === 'home') {
       activeRoomRef.current = null;
       refreshHomeState();
+      loadRooms();
     }
     if (name === 'inspiration') loadInspiration();
     if (name === 'rooms') { activeRoomRef.current = null; loadRooms(); }
@@ -786,7 +801,7 @@ export default function Page() {
       const result = await res.json();
       if (session !== singleSessionRef.current) return;
       setAnalysis(result);
-      setSelectedRec(result.recommendation);
+      setSelectedRec(null);
       setMessages(result.messages);
       logEvent('ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
     } catch {
@@ -820,7 +835,7 @@ export default function Page() {
       const result = await res.json();
       if (session !== singleSessionRef.current) return;
       setAnalysis(result);
-      setSelectedRec(result.recommendation);
+      setSelectedRec(null);
       setMessages(result.messages);
       setChatDraft('');
       logEvent('ai_suggestion_shown', { category: result.category, recommendation: result.recommendation });
@@ -1120,59 +1135,21 @@ export default function Page() {
     goTo(mode === 'tek_esya' ? 'scan' : 'room-scan');
   }
 
-  // Kesif ekrani genis ekranlarda kendi (daha genis) yerlesimini kullanir —
-  // bkz. globals.css .app-wide. Diger butun ekranlar .app'in standart
-  // 460px sutununda degismeden kalir.
-  const isKesifActive = view === 'home' && !showWelcome && !(homeState.totalDecisions > 0 || homeState.hasStartedWork);
-
+  const displayName = identityType === 'account' ? homeState.name : userName;
+  const mainSurface = ['home', 'discover', 'rooms', 'chat'].includes(view);
+  if (!identityLoaded) return <div className="app"><div className="scroll sestia-onboarding"><Brand/><p role="status" className="muted">Birlikte başlıyoruz…</p></div></div>;
+  if (!currentIdentityId) return <div className="app"><div className="scroll"><PageHeading title="Bağlantıyı yeniden deneyelim."/><p className="errbox">{homeError}</p><button className="btn-primary" onClick={()=>refreshHomeState(true)}>Tekrar dene</button></div></div>;
   return (
-    <div className={isKesifActive ? 'app app-wide' : 'app'}>
-      {view === 'home' && (
-        showWelcome ? (
-          <WelcomeView
-            onGuestStart={() => {
-              setShowWelcome(false);
-              // WelcomeView icinde kaydedilen isim, Page seviyesindeki
-              // state'e burada aktariliyor — aksi halde ana ekran ilk
-              // anda eski (bos) degeri gosterir (bkz. lib/client.js).
-              setUserNameState(getUserName(currentIdentityId));
-            }}
-            currentIdentityId={currentIdentityId}
-            emailReady={homeState.emailReady}
-          />
-        ) : isKesifActive ? (
-          // Henuz gercek bir calismasi (oda/fotograf/analiz/karar) olmayan
-          // kullanici Kesif deneyimindedir — bkz. brief Bolum 7. Sadece
-          // totalDecisions===0 YETERLI DEGIL: oda olusturmus/fotograf
-          // yuklemis/analiz yaptirmis ama henuz nihai karar vermemis biri de
-          // "gercek calismasi olan" sayilir (bkz. lib/db.js
-          // hasStartedRealWork). /api/decide yanitinda hasStartedWork alani
-          // olmadigi icin totalDecisions>0 kontrolu ayri tutuluyor.
-          <KesifView
-            userName={identityType === 'account' ? homeState.name : userName}
-            library={sestiaLibrary}
-            onScanSingle={() => selectMode('tek_esya')}
-            onScanRoom={() => selectMode('oda_tarama')}
-          />
-        ) : (
-          <HomeView
-            homeState={homeState}
-            homeMessage={homeMessage}
-            homeError={homeError}
-            identityType={identityType}
-            userName={identityType === 'account' ? homeState.name : userName}
-            onScanSingle={() => selectMode('tek_esya')}
-            onScanRoom={() => selectMode('oda_tarama')}
-            onOpenInspiration={() => goTo('inspiration')}
-            onOpenRooms={() => goTo('rooms')}
-            onOpenAccount={() => goTo('account')}
-          />
-        )
-      )}
-
+    <div className={`app${mainSurface && !showWelcome ? ' sestia-with-nav' : ''}`} data-screen={showWelcome ? 'welcome' : view}>
+      {view === 'home' && (showWelcome ? (
+        <WelcomeView onGuestStart={() => {setShowWelcome(false);setUserNameState(getUserName(currentIdentityId));goTo('discover');}} currentIdentityId={currentIdentityId} emailReady={homeState.emailReady} />
+      ) : <HomeDashboard userName={displayName} rooms={rooms} roomsLoading={roomsLoading} roomsError={roomsError} homeState={homeState} homeMessage={homeMessage} onOpenRoom={openRoom} onNavigate={goTo} onChat={openSestiaChat} onAccount={()=>goTo('account')} error={homeError}/>)}
+      {view === 'discover' && <DiscoverView library={sestiaLibrary} onChat={openSestiaChat} onNavigate={goTo} onAccount={()=>goTo('account')}/>}
+      {view === 'choose' && <ChooseView onBack={()=>goTo('home')} onSingle={()=>selectMode('tek_esya')} onRoom={()=>selectMode('oda_tarama')}/>}
+      {!showWelcome && <SestiaChat key={currentIdentityId} active={view==='chat'} context={chatContext} onBack={()=>goTo('home')}/>}
       {view === 'account' && (
-        <WelcomeView
-          onGuestStart={() => goTo('home')}
+        identityType === 'account' ? <section className="view"><div className="scroll"><Header onBack={()=>goTo('home')}/><PageHeading title="Hesabın">{displayName ? `Merhaba, ${displayName}.` : 'Hesabınla devam ediyorsun.'}</PageHeading><div className="card"><h2>Birlikte baktıklarımız burada.</h2><p className="muted">Odalarına, fotoğraflarına ve kararlarına hesabınla erişebilirsin.</p></div><button className="btn-primary" onClick={()=>goTo('rooms')}>Odalarıma dön</button></div></section> : <WelcomeView
+          onGuestStart={() => {setUserNameState(getUserName(currentIdentityId));goTo('home');}}
           currentIdentityId={currentIdentityId}
           emailReady={homeState.emailReady}
           alreadyGuest
@@ -1323,7 +1300,8 @@ export default function Page() {
         />
       )}
 
-      <FeedbackButton screen={view} />
+      {!showWelcome && mainSurface && <MainNavigation view={view} onNavigate={goTo}/>}
+      {!showWelcome && <FeedbackButton screen={view} />}
     </div>
   );
 }
@@ -1349,7 +1327,7 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState(null); // null | 'not_configured' | 'sent' | 'error'
   const [errorDetail, setErrorDetail] = useState(null); // Auth.js'in dondurdugu ham hata kodu (varsa)
-  const [showEmailForm, setShowEmailForm] = useState(false);
+
   // Zaten misafirsek VE hitap tercihi zaten biliniyorsa dogrudan yontem
   // secim asamasindan basla — ayni tercihi tekrar sormuyoruz. Bilinmiyorsa
   // (ör. daha once misafir dogrudan "Misafir Olarak Dene" ile devam etmisse)
@@ -1446,448 +1424,44 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
     onGuestStart();
   }
 
-  return (
-    <section className="view">
-      {onBack && (
-        <div className="topbar">
-          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
-        </div>
-      )}
-      <div className="scroll center" style={{ paddingTop: onBack ? 8 : 40, gap: 22 }}>
-        {stage === 'intro' && (
-          <>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <img src="/icon.svg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
-              <h1 style={{ fontSize: 22, fontWeight: 700, textAlign: 'center' }}>Merhaba, ben {ASSISTANT_NAME}!</h1>
-              <div className="muted" style={{ fontSize: 14, marginTop: 6 }}>Sana nasıl hitap etmemi istersin?</div>
-            </div>
-
-            <form onSubmit={continueFromIntro} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={saveNameLocally}
-                placeholder="Adın veya tercih ettiğin hitap şekli"
-                maxLength={60}
-                autoFocus
-                style={welcomeInputStyle}
-              />
-              <button className="btn-primary" type="submit" disabled={!name.trim()}>Devam Et</button>
-            </form>
-          </>
-        )}
-
-        {stage === 'method' && (
-          <>
-            {name.trim() && (
-              <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 600 }}>Memnun oldum, {name.trim()}!</div>
-            )}
-            {status !== 'sent' && (
-              <div className="muted" style={{ textAlign: 'center', fontSize: 14 }}>Nasıl devam etmek istersin?</div>
-            )}
-
-            {status === 'sent' ? (
-              <div className="card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontWeight: 600, fontSize: 14.5 }}>E-posta yolda</div>
-                <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-                  {email} adresine bir giriş bağlantısı gönderdik. Gelen kutunu kontrol et.
-                </div>
-              </div>
-            ) : (
-              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {emailReady ? (
-                  showEmailForm ? (
-                    <form onSubmit={submitEmail} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="ornek@email.com"
-                        disabled={submitting}
-                        autoFocus
-                        style={welcomeInputStyle}
-                      />
-                      {status === 'not_configured' && (
-                        <div className="errbox">
-                          E-posta ile giriş şimdilik hazır değil — misafir olarak devam edebilirsin.
-                        </div>
-                      )}
-                      {status === 'error' && (
-                        <div className="errbox">
-                          E-posta gönderilemedi{errorDetail ? ` (${EMAIL_ERROR_LABELS[errorDetail] || errorDetail})` : ''} — tekrar dener misin?
-                        </div>
-                      )}
-                      <button className="btn-primary" type="submit" disabled={!email.trim() || submitting}>
-                        {submitting ? 'Gönderiliyor...' : 'Devam Et'}
-                      </button>
-                    </form>
-                  ) : (
-                    <div>
-                      <button className="btn-primary" onClick={() => setShowEmailForm(true)} style={{ width: '100%' }}>
-                        E-posta ile Devam Et
-                      </button>
-                      <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 6 }}>
-                        İlerlemeni koru, farklı cihazlardan kaldığın yerden devam et.
-                      </div>
-                    </div>
-                  )
-                ) : (
-                  <div className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>
-                    E-posta ile giriş yakında burada olacak.
-                  </div>
-                )}
-
-                {!alreadyGuest && (
-                  <div>
-                    <button className="btn-secondary" onClick={chooseGuest} style={{ width: '100%' }}>
-                      Misafir Olarak Dene
-                    </button>
-                    <div className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 6 }}>
-                      Önce biraz keşfetmek ister misin?
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </section>
-  );
-}
-
-// KEŞİF — henüz gerçek bir çalışması (onaylanmış kararı) olmayan kullanıcı
-// için ilk ürün deneyimi (bkz. brief Bölüm 3). "İkinci bir landing page"
-// değil: kullanıcı zaten WelcomeView'dan (isim + misafir/hesap seçimi)
-// geçmiş durumda buraya geliyor. Sadece section 3/5, mevcut ve ÇALIŞAN
-// Oda Taraması / Tek Eşya akışlarına bağlanıyor; "Bir Köşe" (section 4)
-// bilerek hiçbir CTA'ya sahip değil — bağımsız bir akışı henüz yok, brief
-// bunu tamamlanmış gibi göstermeyi açıkça yasaklıyor.
-function KesifView({ userName, library, onScanSingle, onScanRoom }) {
-  const greetingLines = (library?.greeting?.metin || 'Birlikte neler yapabileceğimize bakmaya ne dersin?').split('\n');
-
-  // Kesif ekranindaki serbest sohbet: /api/sestia-chat'e baglanir (bkz.
-  // lib/anthropic.js chatFreely). Mevcut tek-esya/oda sohbetlerinden farkli
-  // olarak fotograf GEREKMEZ — bu yuzden ayri bir yerel state seti (o
-  // akislarin dosya referanslarini/oturum sayaclarini paylasmiyor), ama
-  // AYNI gorsel dil (.chat-history/.chat-message) ve AYNI kimlik dogrulama
-  // deseni kullaniliyor.
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatDraft, setChatDraft] = useState('');
-  const [chatBusy, setChatBusy] = useState(false);
-  const [chatError, setChatError] = useState(null);
-  const chatSectionRef = useRef(null);
-  const chatInputRef = useRef(null);
-  const chatHistoryRef = useRef(null);
-
-  useEffect(() => {
-    const history = chatHistoryRef.current;
-    if (history) history.scrollTop = history.scrollHeight;
-  }, [chatMessages]);
-
-  // Bolumlerden ("Bir Oda" vb.) gelen davet: SADECE sohbet henuz baslamamissa
-  // baglam etiketini tasir (bkz. app/api/sestia-chat — sabit anahtar, serbest
-  // metin degil). Sohbet zaten basladiysa sadece giris alanina odaklanir.
-  const pendingContextRef = useRef(null);
-  function openChatFrom(sectionKey) {
-    if (chatMessages.length === 0) pendingContextRef.current = sectionKey;
-    chatSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    chatInputRef.current?.focus();
+  function skipName() {
+    try { if(currentIdentityId) localStorage.setItem('sestia_intro_skipped', currentIdentityId); } catch {}
+    setStage('method');
   }
-
-  async function sendSestiaChat(e) {
-    e.preventDefault();
-    const content = chatDraft.trim();
-    if (!content || chatBusy || chatMessages.length >= 41) return;
-    const nextMessages = [...chatMessages, { role: 'user', content }];
-    const sectionContext = chatMessages.length === 0 ? pendingContextRef.current : null;
-    setChatMessages(nextMessages);
-    setChatDraft('');
-    setChatBusy(true);
-    setChatError(null);
-    try {
-      const res = await fetch('/api/sestia-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: nextMessages, sectionContext }),
-      });
-      if (!res.ok) throw new Error('chat_failed');
-      const result = await res.json();
-      setChatMessages(result.messages);
-    } catch {
-      // Cevapsız kalan kullanıcı mesajını geri al: aksi hâlde bir sonraki
-      // gönderim user,user sırası üretir, validChatMessages bunu reddeder ve
-      // sohbet kalıcı olarak 400'e düşer. Mesaj, tekrar gönderilebilsin diye
-      // yazma alanına geri konur.
-      setChatMessages(chatMessages);
-      setChatDraft((draft) => draft || content);
-      setChatError('Yanıt alınamadı. Mesajını tekrar gönderebilir ya da aşağıdan devam edebilirsin.');
-    } finally {
-      setChatBusy(false);
-    }
+  function back() {
+    if(stage==='method'){setStage('intro');setStatus(null);} else if(onBack) onBack(); else window.location.href='/hosgeldin';
   }
-
-  return (
-    <section className="view">
-      <div className="scroll kesif-scroll">
-        {/* 1 — Kişisel karşılama + ilham kıvılcımı kendi alanında */}
-        <div className="kesif-hero">
-          <h1 style={{ fontSize: 28, fontWeight: 600 }}>{userName ? `Merhaba, ${userName}.` : 'Merhaba.'}</h1>
-          <div className="kesif-greeting">
-            {greetingLines.map((line, i) => <div key={i}>{line}</div>)}
-          </div>
-        </div>
-
-        {library?.spark?.metin && (
-          <div className="kesif-spark">
-            <StarIcon style={{ width: 16, height: 16, flexShrink: 0 }} />
-            <div>{library.spark.metin}</div>
-          </div>
-        )}
-
-        {/* 2 — Sestia'yla konuşma daveti — sohbetin kendisi burada, sağ alttaki
-            geri bildirim simgesinin arkasında saklı değil (bkz. brief Bölüm 2-3) */}
-        <div className="card kesif-chat" ref={chatSectionRef}>
-          <div className="label" style={{ color: 'var(--eucalyptus)' }}>SESTIA</div>
-          {chatMessages.length === 0 && (
-            <>
-              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600, marginTop: 4 }}>
-                Aklına takılan bir şey var mı?
-              </div>
-              <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 4 }}>
-                Bir soruyla, bir fikirle ya da yalnızca merak ettiğin bir şeyle başlayabilirsin.
-                Fotoğraf paylaşman gerekmiyor.
-              </div>
-            </>
-          )}
-          {chatMessages.length > 0 && (
-            <div ref={chatHistoryRef} className="chat-history" role="log" aria-live="polite" aria-relevant="additions" style={{ marginTop: 8 }}>
-              {chatMessages.map((message, index) => (
-                <p key={index} className={`chat-message chat-${message.role}`}>
-                  <span className="chat-speaker">{message.role === 'assistant' ? 'Sestia' : 'Sen'}</span>
-                  {message.content}
-                </p>
-              ))}
-            </div>
-          )}
-          <form onSubmit={sendSestiaChat} className="chat-form" style={{ marginTop: 10 }}>
-            <textarea
-              ref={chatInputRef}
-              rows={2}
-              maxLength={2000}
-              value={chatDraft}
-              onChange={(e) => setChatDraft(e.target.value)}
-              placeholder="Sestia'ya ne sormak istersin?"
-              disabled={chatBusy || chatMessages.length >= 41}
-              aria-label="Sestia'ya ne sormak istersin?"
-            />
-            <button className="btn-outline" type="submit" disabled={!chatDraft.trim() || chatBusy || chatMessages.length >= 41}>
-              {chatBusy ? 'Yanıtlıyor...' : 'Gönder'}
-            </button>
-          </form>
-          {chatBusy && <div role="status" className="muted" style={{ fontSize: 12, marginTop: 6 }}>Sestia yanıtlıyor...</div>}
-          {chatError && <div role="alert" className="errbox" style={{ marginTop: 6 }}>{chatError}</div>}
-          {chatMessages.length >= 41 && (
-            <div role="status" className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-              Bu sohbet için sınıra ulaştık. Aşağıdan bir odaya ya da bir eşyaya birlikte bakabiliriz.
-            </div>
-          )}
-        </div>
-
-        {/* 3 — Evinle ilgili aklında ne var? */}
-        <div className="card" style={{ fontSize: 14, lineHeight: 1.7 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600, marginBottom: 10 }}>
-            Evinle ilgili aklında ne var?
-          </div>
-          Belki bir odayı başka bir amaçla kullanmak istiyorsun. Belki bir köşe bir türlü içine
-          sinmiyor. Ya da yıllardır seninle olan bir eşyayı ne yapacağına karar veremiyorsun.
-          <br /><br />
-          Ne değiştirmek istediğini tam olarak bilmiyor da olabilirsin.
-          <br /><br />
-          İstersen bulunduğun yerden başlayabiliriz.
-        </div>
-
-        {/* 4 — Oda / Köşe / Eşya: üç ayrı yaşam ihtimali, genişte yan yana */}
-        <div className="kesif-possibilities">
-          <div className="kesif-possibility">
-            <div className="flamewrap-compact"><GridIcon style={{ width: 16, height: 16 }} /></div>
-            <div className="kesif-possibility-title">Bir odanın başka bir hayatı olabilir mi?</div>
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              Atölyeyi çalışma odasına dönüştürmek. Misafir odasını farklı kullanmak.
-              Salonu değişen ihtiyaçlara göre yeniden düşünmek. Önce elindeki eşyalarla
-              neler yapabileceğine bakmak önemli — yeni bir şey almadan önce.
-            </div>
-            <button type="button" className="kesif-talk-link" onClick={() => openChatFrom('oda')}>
-              Bu fikir üzerine konuşmak ister misin?
-            </button>
-          </div>
-
-          {/* Bilerek CTA'sız — bağımsız Bir Köşe akışı henüz yok, sadece sohbete davet edebiliriz */}
-          <div className="kesif-possibility">
-            <div className="flamewrap-compact"><LayersIcon style={{ width: 16, height: 16 }} /></div>
-            <div className="kesif-possibility-title">Ya bütün oda değil, yalnızca bir köşeyse?</div>
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              Çalışma köşesi. Pencere önü. Bir raf. Masa çevresi. Bütün odayı değiştirmek
-              zorunda değilsin.
-            </div>
-            <button type="button" className="kesif-talk-link" onClick={() => openChatFrom('kose')}>
-              Bu fikir üzerine konuşmak ister misin?
-            </button>
-          </div>
-
-          <div className="kesif-possibility">
-            <div className="flamewrap-compact"><BoxIcon style={{ width: 16, height: 16 }} /></div>
-            <div className="kesif-possibility-title">Peki ya yalnızca bir eşya?</div>
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              Eski bir sandalye. Kullanılmayan bir masa. Nereye koyacağını bilemediğin bir dolap.
-              "Bunu atmalı mıyım?" sorusunun yanında "başka türlü kullanabilir miyim?" ihtimalini
-              de birlikte değerlendirebiliriz — son karar hep sende.
-            </div>
-            <button type="button" className="kesif-talk-link" onClick={() => openChatFrom('esya')}>
-              Bu fikir üzerine konuşmak ister misin?
-            </button>
-          </div>
-        </div>
-
-        {/* 5 — Süreklilik */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600 }}>
-            Birlikte düşündüklerimiz burada kalır.
-          </div>
-          <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-            Fotoğraflarına, değerlendirmelerine ve verdiğin kararlara "Odalarım"dan
-            istediğin zaman geri dönebilirsin. Bugün başlayıp başka bir gün devam edebilirsin.
-          </div>
-        </div>
-
-        {/* 6 — İlk gerçek adım */}
-        <div className="kesif-start" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>
-              Aklına bir yer ya da eşya geldi mi?
-            </div>
-            <div className="muted" style={{ fontSize: 13.5, marginTop: 4 }}>Nereden başlamak istersin?</div>
-          </div>
-          <button className="btn-primary" onClick={onScanRoom}>Bir odaya bakalım mı?</button>
-          <button className="btn-outline" onClick={onScanSingle}>Bir eşyayı değerlendirelim mi?</button>
-        </div>
-      </div>
-    </section>
-  );
+  return <section className="view sestia-onboarding">
+    <div className="scroll"><Header onBack={back}/><Brand/>
+    {stage==='intro' ? <>
+      <PageHeading title="Sana nasıl hitap etmemi istersin?" center>Böylece konuşmalarımız daha sana özel olabilir.</PageHeading>
+      <form className="sestia-form" onSubmit={continueFromIntro}>
+        <label htmlFor="preferred-name">Sana nasıl hitap edelim?</label><input id="preferred-name" autoComplete="given-name" value={name} onChange={e=>setName(e.target.value)} maxLength={60} placeholder="Adın ya da tercih ettiğin hitap"/>
+        <button className="btn-primary" disabled={!name.trim()}>Devam Et <ChevronRightIcon/></button>
+      </form>
+      <button className="sestia-text-link" onClick={skipName}>Şimdilik isimsiz devam et →</button>
+    </> : <>
+      <PageHeading title={status==='sent'?'E-posta yolda.':'Nasıl devam etmek istersin?'} center>{status==='sent'?'Giriş bağlantın için gelen kutuna bak.':name.trim()?`Memnun oldum, ${name.trim()}.`:'İstersen hesabınla ilerleyebilir, istersen misafir olarak devam edebilirsin.'}</PageHeading>
+      {status==='sent' ? <div className="card sestia-email-sent"><h2>{email}</h2><p className="muted">Bu adrese bir giriş bağlantısı gönderdik. Gelen kutunu ve gereksiz klasörünü kontrol edebilirsin.</p><button className="btn-outline" onClick={()=>setStatus(null)}>E-posta adresini değiştir</button></div> : emailReady ? <form className="card sestia-form" onSubmit={submitEmail}>
+        <h2>E-posta ile devam et</h2><p className="muted">İlerlemeni hesabınla koru.</p>
+        {!initialName && <><label htmlFor="signup-name">Tercih ettiğin hitap</label><input id="signup-name" required autoComplete="given-name" maxLength={60} value={name} onChange={e=>setName(e.target.value)} placeholder="Hesabın için bir hitap" disabled={submitting}/></>}
+        <label htmlFor="signup-email">E-posta adresin</label><input id="signup-email" type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="ornek@email.com" disabled={submitting}/>
+        {status==='not_configured' && <p role="alert" className="errbox">E-posta ile giriş şu anda hazır değil. Misafir olarak devam edebilirsin.</p>}
+        {status==='error' && <p role="alert" className="errbox">E-posta gönderilemedi{errorDetail?` (${EMAIL_ERROR_LABELS[errorDetail]||'Bağlantı sorunu'})`:''}. Tekrar dener misin?</p>}
+        <button className="btn-primary" disabled={submitting||!email.trim()||!name.trim()}>{submitting?'Gönderiliyor…':'Giriş bağlantısı gönder'}<ChevronRightIcon/></button>
+      </form> : <div className="card"><h2>Misafir olarak keşfet.</h2><p className="muted">E-posta ile giriş şu anda hazır değil. Sestia ile konuşabilir, fotoğraflarına birlikte bakabilirsin.</p></div>}
+      {emailReady && <div className="sestia-divider">veya</div>}<button className={emailReady?'btn-outline':'btn-primary'} disabled={submitting} onClick={()=>{saveNameLocally();chooseGuest();}}>Misafir olarak devam et <ChevronRightIcon/></button>
+    </>}
+    </div>
+  </section>;
 }
-
-function HomeView({ homeState, homeMessage, homeError, identityType, userName, onScanSingle, onScanRoom, onOpenInspiration, onOpenRooms, onOpenAccount }) {
-  return (
-    <section className="view">
-      <div className="scroll">
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 600 }}>{userName ? `Merhaba, ${userName}.` : 'Merhaba.'}</h1>
-        </div>
-
-        <button
-          className="card"
-          style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
-          onClick={onOpenRooms}
-        >
-          <div className="flamewrap-compact"><BoxIcon style={{ width: 18, height: 18 }} /></div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>Odalarım</div>
-            <div className="muted">Oluşturduğun odalara göz at</div>
-          </div>
-          <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
-        </button>
-
-        {homeState.totalDecisions >= 5 && (
-          <button
-            className="card"
-            style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
-            onClick={onOpenInspiration}
-          >
-            <div className="flamewrap-compact"><StarIcon style={{ width: 18, height: 18 }} /></div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>Bu Hafta</div>
-              <div className="muted">Kararlarına göre kişisel ipuçları</div>
-            </div>
-            <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
-          </button>
-        )}
-
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div className="flamewrap-compact"><FlameIcon style={{ width: 18, height: 18 }} /></div>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 700 }}>
-              {homeState.totalDecisions === 0 ? '1. Gün' : `${homeState.streak} gün`}
-            </div>
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--border)' }} />
-
-          <div>
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600 }}>
-              {homeMessage?.baslik || 'Nereden başlamak istersin?'}
-            </div>
-            <div className="muted" style={{ marginTop: 4 }}>
-              {homeMessage?.alt_baslik || 'Herhangi bir odadan bir eşya seç ve fotoğrafını çek · ~1 dakika'}
-            </div>
-          </div>
-          {homeMessage?.soru?.metin && (
-            <div style={{ fontSize: 13.5, fontWeight: 500 }}>{homeMessage.soru.metin}</div>
-          )}
-          <div className="modeoptions">
-            <button className="modeoption" onClick={onScanSingle}>
-              <div className="modeoption-iconwrap"><CameraIcon style={{ width: 16, height: 16 }} /></div>
-              <div className="modeoption-title">Tek Eşya</div>
-              <div className="modeoption-desc">Bir eşyayı birlikte değerlendirelim.</div>
-            </button>
-            <button className="modeoption" onClick={onScanRoom}>
-              <div className="modeoption-iconwrap"><GridIcon style={{ width: 16, height: 16 }} /></div>
-              <div className="modeoption-title">Oda Taraması</div>
-              <div className="modeoption-desc">Yaşam alanına birlikte bakalım.</div>
-            </button>
-          </div>
-        </div>
-
-        <div className="statrow">
-          <div className="statchip">
-            <div className="statnum">{homeState.points}</div>
-            <div className="statlabel">Puan</div>
-          </div>
-          <div className="statchip">
-            <div className="statnum">{homeState.totalDecisions}</div>
-            <div className="statlabel">Karar Verildi</div>
-          </div>
-        </div>
-
-        {homeError && <div className="errbox">{homeError}</div>}
-
-        {identityType !== 'account' && (
-          <button
-            className="card"
-            style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
-            onClick={onOpenAccount}
-          >
-            <div className="flamewrap-compact"><CheckIcon style={{ width: 18, height: 18 }} /></div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>İlerlemeni koru.</div>
-              <div className="muted">Odalarına ve kararlarına diğer cihazlarından da eriş.</div>
-              <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 4 }}>Hesap oluştur veya giriş yap</div>
-            </div>
-            <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
-
 function InspirationView({ data, loading, error, onBack, onRetry }) {
   return (
     <section className="view">
       <div className="scroll">
         <div className="topbar">
           <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Bu Hafta</h2>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Bu haftanın fikirleri</h2>
         </div>
 
         {loading && (
@@ -1941,89 +1515,21 @@ function InspirationView({ data, loading, error, onBack, onRetry }) {
 }
 
 function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, onCreateRoom }) {
-  const [name, setName] = useState('');
-  function submit(e) {
-    e.preventDefault();
-    const clean = name.trim();
-    if (!clean || creating) return;
-    onCreateRoom(clean);
-    setName('');
-  }
-  return (
-    <section className="view">
-      <div className="scroll">
-        <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Odalarım</h2>
-        </div>
-
-        <form onSubmit={submit} style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Örn. Salon"
-            maxLength={60}
-            disabled={creating}
-            style={{
-              flex: 1, boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12,
-              border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 15,
-            }}
-          />
-          <button className="btn-primary" type="submit" disabled={!name.trim() || creating} style={{ width: 'auto', padding: '0 18px' }}>
-            {creating ? '...' : 'Ekle'}
-          </button>
-        </form>
-
-        {error && <div className="errbox">{error}</div>}
-        {loading && (
-          <div className="thinking">
-            <div className="spinner" />
-          </div>
-        )}
-
-        {!loading && rooms.length === 0 && (
-          <div className="muted" style={{ textAlign: 'center', marginTop: 8 }}>
-            Henüz bir oda oluşturmadın. Yukarıdan bir isim yazıp başlayabilirsin.
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {rooms.map((room) => (
-            <button
-              key={room.id}
-              className="card"
-              style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%' }}
-              onClick={() => onOpenRoom(room.id)}
-            >
-              {room.coverPhotoId ? (
-                <img
-                  src={`/api/rooms/${room.id}/photos/${room.coverPhotoId}`}
-                  alt=""
-                  style={{ width: 48, height: 48, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }}
-                />
-              ) : (
-                <div className="flamewrap-compact"><GridIcon style={{ width: 18, height: 18 }} /></div>
-              )}
-              <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>{room.name}</div>
-                <div className="muted">{room.decisionCount} karar</div>
-              </div>
-              <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
-            </button>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
+  const [name,setName]=useState('');
+  function submit(e){e.preventDefault();if(name.trim()&&!creating)onCreateRoom(name.trim());}
+  return <section className="view"><div className="scroll"><Header onBack={onBack}/><PageHeading title="Odalarım">Birlikte baktığımız alanlar.</PageHeading>
+    {error&&<div role="alert" className="errbox">{error}</div>}{loading&&<p role="status" className="muted">Odaların yükleniyor…</p>}
+    {!loading&&!error&&!rooms.length&&<div className="sestia-empty"><GridIcon/><h3>İlk odana yer aç.</h3><p>Bir ad ver; fotoğraflarını ve birlikte baktıklarımızı burada bir araya getirelim.</p></div>}
+    <div className="sestia-room-list">{rooms.map(room=><button key={room.id} className="sestia-photo-card" onClick={()=>onOpenRoom(room.id)}><RoomCover room={room}/><div><h2>{room.name}</h2><p>{room.decisionCount} karar · Görüntüle →</p></div></button>)}</div>
+    <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
+  </div></section>;
 }
-
 function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onResumeScan, onViewAnalysis }) {
   return (
     <section className="view">
-      <div className="scroll">
+      <div className="scroll sestia-room-detail">
         <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>{room?.name || 'Oda'}</h2>
         </div>
 
@@ -2036,6 +1542,8 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
 
         {room && !loading && (
           <>
+            <p className="muted">Bu odada görmek, anlamak, değiştirmek istediğin her şeye birlikte bakalım.</p>
+            {room.photos[0] && <img className="sestia-room-hero" src={`/api/rooms/${room.id}/photos/${room.photos[0].id}`} alt={room.name} />}
             {room.photos.length > 0 && (
               <div className="photogrid">
                 {room.photos.map((photo) => (
@@ -2059,16 +1567,17 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
             <CaptureButtons
               onFile={onAddPhoto}
               idPrefix="room-detail-photo"
+              disabled={uploading}
               cameraLabel={uploading ? 'Yükleniyor...' : (room.photos.length ? 'Bir Fotoğraf Daha Ekle' : 'Fotoğraf Ekle')}
               galleryLabel="Galeriden Ekle"
             />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button className="btn-outline" onClick={onScanHere} disabled={uploading}>
-                <CameraIcon style={{ width: 18, height: 18 }} /> Bu Odada Eşya Tara
+                <CameraIcon style={{ width: 18, height: 18 }} /> Bir eşyaya bakalım
               </button>
               <button className="btn-outline" onClick={onRoomScanHere} disabled={uploading}>
-                <GridIcon style={{ width: 18, height: 18 }} /> Oda Taraması Yap
+                <GridIcon style={{ width: 18, height: 18 }} /> Odaya birlikte bakalım
               </button>
             </div>
 
@@ -2123,45 +1632,31 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
   );
 }
 
-function CaptureButtons({ onFile, idPrefix, multiple, cameraLabel = 'Fotoğraf Çek', galleryLabel = 'Galeriden Seç' }) {
+function CaptureButtons({ onFile, idPrefix, multiple, disabled = false, cameraLabel = 'Fotoğraf çek', galleryLabel = 'Galeriden seç' }) {
   const cameraId = `${idPrefix}-camera`;
   const galleryId = `${idPrefix}-gallery`;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
-      <label className="btn-primary" htmlFor={cameraId} style={{ cursor: 'pointer' }}>
+      <button type="button" className="btn-primary" disabled={disabled} onClick={()=>document.getElementById(cameraId)?.click()}>
         <CameraIcon style={{ width: 18, height: 18 }} /> {cameraLabel}
-      </label>
-      <input type="file" id={cameraId} accept="image/*" capture="environment" onChange={onFile} />
+      </button>
+      <input type="file" id={cameraId} accept="image/*" capture="environment" disabled={disabled} onChange={onFile} />
 
-      <label className="btn-outline" htmlFor={galleryId} style={{ cursor: 'pointer' }}>
+      <button type="button" className="btn-outline" disabled={disabled} onClick={()=>document.getElementById(galleryId)?.click()}>
         <GalleryIcon style={{ width: 18, height: 18 }} /> {galleryLabel}
-      </label>
-      <input type="file" id={galleryId} accept="image/*" multiple={multiple} onChange={onFile} />
+      </button>
+      <input type="file" id={galleryId} accept="image/*" multiple={multiple} disabled={disabled} onChange={onFile} />
     </div>
   );
 }
 
-function ScanView({ title, onBack, onFile }) {
-  return (
-    <section className="view">
-      <div className="scroll">
-        <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>{title}</h2>
-        </div>
-
-        <div className="card center" style={{ flexGrow: 1, minHeight: 260, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <CameraIcon style={{ width: 40, height: 40, color: 'var(--text-muted)' }} strokeWidth="1.6" />
-          <div className="muted" style={{ maxWidth: 220 }}>
-            Bir eşyayı net bir açıdan fotoğrafla, yapay zeka senin için analiz etsin
-          </div>
-          <CaptureButtons onFile={onFile} idPrefix="photo-single" />
-        </div>
-      </div>
-    </section>
-  );
+function ScanView({ onBack, onFile }) {
+  return <section className="view"><div className="scroll"><Header onBack={onBack}/><PageHeading title="Birlikte bakalım.">Üzerine konuşmak istediğin eşyanın fotoğrafını paylaş.</PageHeading>
+    <button className="sestia-upload-zone" onClick={()=>document.getElementById('photo-single-gallery')?.click()}><CameraIcon/><span>Fotoğrafını buraya ekle</span></button>
+    <CaptureButtons onFile={onFile} idPrefix="photo-single"/>
+    <p className="muted">Eşyanın tamamı ve ayrıntıları görünsün.</p>
+  </div></section>;
 }
-
 function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, coverageChecking, coverageResult, onContinueAnyway,
   photosSavedToRoom, photosUploading, photosUploadFailed, onRetryUploads }) {
   const canAddMore = photos.length < MAX_ROOM_PHOTOS;
@@ -2169,8 +1664,8 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, covera
     <section className="view">
       <div className="scroll">
         <div className="topbar">
-          <button className="iconbtn" onClick={onBack}><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Oda Taraması</h2>
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Alanı birlikte görelim.</h2>
         </div>
 
         {error && (
@@ -2281,7 +1776,7 @@ function DecisionView({
       <div className="scroll">
         <div className="topbar">
           <button className="iconbtn" onClick={onBack} disabled={confirming} aria-label="Geri"><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Analiz Sonucu</h2>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Birlikte değerlendirelim.</h2>
         </div>
 
         <div className="photowrap">
@@ -2316,7 +1811,7 @@ function DecisionView({
         {analyzing && (
           <div className="thinking">
             <div className="spinner" />
-            <div>Yapay zeka fotoğrafı inceliyor...</div>
+            <div>Sestia fotoğrafına bakıyor…</div>
           </div>
         )}
 
@@ -2324,6 +1819,7 @@ function DecisionView({
 
         {analysis && meta && (
           <div className="rec-banner" style={{ background: `var(--${meta.varName}-tint)` }}>
+            <span className="sestia-suggestion">Sestia’nın önerisi</span>
             <div className="rec-head">
               <div className="rec-iconwrap" style={{ background: `var(--${meta.varName})` }}>
                 <meta.Icon style={{ width: 18, height: 18 }} />
@@ -2380,7 +1876,7 @@ function DecisionView({
 
       <div className="decision-footer">
         <button className="btn-primary" disabled={!selectedRec || confirming || analyzing || chatBusy} onClick={onConfirm}>
-          {confirming ? 'Kaydediliyor...' : 'Onayla ve Devam Et'}
+          {confirming ? 'Kaydediliyor...' : 'Kararımı kaydet'}
         </button>
       </div>
     </section>
@@ -2483,7 +1979,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
       <div className="scroll">
         <div className="topbar">
           <button className="iconbtn" onClick={onBack} disabled={confirming} aria-label="Geri"><BackIcon /></button>
-          <h2 style={{ fontSize: 19, fontWeight: 600 }}>{readOnly ? 'Geçmiş Analiz' : 'Oda Analizi'}</h2>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>{readOnly ? 'Birlikte baktıklarımız' : 'Odaya birlikte bakalım.'}</h2>
         </div>
 
         <div className="photostrip">
@@ -2497,7 +1993,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
         {analyzing && (
           <div className="thinking">
             <div className="spinner" />
-            <div>Yapay zeka {photos.length > 1 ? 'fotoğrafları' : 'odayı'} inceliyor...</div>
+            <div>Sestia {photos.length > 1 ? 'fotoğrafları' : 'odayı'} inceliyor...</div>
           </div>
         )}
 
@@ -2575,6 +2071,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
                     <div className="muted">{roomItemSources.suggestionLabel(item, REC_META)}</div>
                   ) : (
                     <>
+                      <span className="sestia-suggestion">Öneri: {REC_META[item.modelSuggestion?.recommendation || item.recommendation]?.label}</span>
                       {item.manual && <div className="muted">Senin seçimin: {REC_META[item.recommendation].label}</div>}
                       <div className="roomcard-actions">
                         {ACTION_ORDER.map((key) => {
@@ -2582,7 +2079,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
                           return (
                             <button
                               key={key}
-                              className={`roomcard-actionbtn${item.recommendation === key ? ' selected' : ''}`}
+                              className={`roomcard-actionbtn${item.manual && item.recommendation === key ? ' selected' : ''}`}
                               data-key={key}
                               onClick={() => onSetRec(index, key)}
                               disabled={chatBusy || confirming || scanSaving}
@@ -2647,49 +2144,13 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
   );
 }
 
-function CelebrationView({ celebration, userName, onScanAgain, onHome }) {
-  return (
-    <section className="view">
-      <div className="scroll center" style={{ paddingTop: 60 }}>
-        <div
-          style={{
-            width: 88,
-            height: 88,
-            borderRadius: 44,
-            background: 'var(--eucalyptus)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <CheckIcon style={{ width: 44, height: 44, color: '#fff' }} />
-        </div>
-        <h1 style={{ fontSize: 28, fontWeight: 600, marginTop: 22 }}>Harika iş{userName ? `, ${userName}` : ''}!</h1>
-        <div className="muted" style={{ marginTop: 6 }}>Bugünün görevini tamamladın</div>
-
-        <div className="statrow" style={{ marginTop: 22 }}>
-          <div className="statchip">
-            <FlameIcon style={{ width: 20, height: 20, color: 'var(--eucalyptus)' }} />
-            <div className="statnum">{celebration.streak} gün</div>
-            <div className="statlabel">Seri</div>
-          </div>
-          <div className="statchip">
-            <StarIcon style={{ width: 20, height: 20, color: 'var(--terracotta)' }} />
-            <div className="statnum">+{celebration.pointsGained}</div>
-            <div className="statlabel">Puan</div>
-          </div>
-        </div>
-
-        <div className="card" style={{ marginTop: 18, textAlign: 'left', width: '100%' }}>
-          <div className="label" style={{ color: 'var(--text-muted)' }}>Bu Karar</div>
-          <div style={{ fontSize: 13.5, marginTop: 6, lineHeight: 1.5 }}>{celebration.summary}</div>
-        </div>
-      </div>
-
-      <div style={{ padding: '14px 22px 30px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <button className="btn-primary" onClick={onScanAgain}>Bir Eşya Daha Tara</button>
-        <button className="btn-secondary" onClick={onHome}>Yarın Görüşürüz</button>
-      </div>
-    </section>
-  );
+function CelebrationView({ celebration, onScanAgain, onHome }) {
+  return <section className="view sestia-success"><div className="scroll center" style={{paddingTop:64}}>
+    <div style={{width:72,height:72,borderRadius:'50%',background:'var(--teal)',display:'grid',placeItems:'center'}}><CheckIcon style={{width:32,height:32,color:'#fff'}}/></div>
+    <h1 style={{fontSize:36,textAlign:'center'}}>Kararın kaydedildi.</h1>
+    <div className="card" style={{width:'100%'}}><p>{celebration.summary}</p></div>
+    <p className="sestia-stats">+{celebration.pointsGained} puan · {celebration.streak} günlük seri</p>
+    <button className="btn-primary" onClick={onHome}>Kaydıma dön <ChevronRightIcon/></button>
+    <button className="sestia-text-link" onClick={onScanAgain}>Başka bir eşyaya bak</button>
+  </div></section>;
 }

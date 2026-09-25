@@ -1,10 +1,11 @@
 import './globals.css';
+import './sestia.css';
 import GlobalErrorReporter from '@/components/GlobalErrorReporter';
 import { ASSISTANT_NAME } from '@/lib/constants';
 
 export const metadata = {
   title: ASSISTANT_NAME,
-  description: 'Bir eşyaya karar ver: tut, sat, bağışla, at ya da geri dönüştür — AI önerisiyle.',
+  description: 'SESTIA — Yaşam alanında, hep yanında. Düzenlemeden yerleşime, elindekilerle yeni olasılıklar keşfet.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
@@ -17,23 +18,20 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#F3ECE2' },
-    { media: '(prefers-color-scheme: dark)', color: '#211D18' },
-  ],
+  themeColor: '#F4EFE7',
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="tr">
+    <html lang="tr" data-theme="light">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
         />
-        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-        <link rel="apple-touch-icon" href="/icon.svg" />
+        <link rel="icon" href="/sestia/logo.webp" type="image/webp" />
+        <link rel="apple-touch-icon" href="/sestia/logo.webp" />
       </head>
       <body>
         <GlobalErrorReporter />

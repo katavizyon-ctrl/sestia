@@ -9,6 +9,8 @@ data/room-photos/
 backups/
 .env
 .env.local
+.env.*
+!.env.example
 npm-debug.log*
 
 # SESTIA Bilgi Kütüphanesi — _INBOX ham kaynakları Git dışında (yerelde ayrıca yedeklenir), yalnızca .gitkeep izlenir

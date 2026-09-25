@@ -1,18 +1,18 @@
 {
   "name": "Sestia",
   "short_name": "Sestia",
-  "description": "Bir eşyaya karar ver: tut, sat, bağışla, at ya da geri dönüştür — AI önerisiyle.",
+  "description": "SESTIA — Yaşam alanında, hep yanında.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F3ECE2",
-  "theme_color": "#A67C5A",
+  "background_color": "#F4EFE7",
+  "theme_color": "#183C3F",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "sizes": "1254x1254",
+      "purpose": "any",
+      "src": "/sestia/logo.webp",
+      "type": "image/webp"
     }
   ]
 }

@@ -14,7 +14,7 @@ function DailyBarChart({ daily }) {
             style={{
               width: '100%',
               maxWidth: 40,
-              background: 'var(--terracotta)',
+              background: 'var(--teal)',
               borderRadius: 6,
               height: `${Math.max(4, (d.count / maxCount) * 110)}px`,
             }}
@@ -59,7 +59,7 @@ export default function AdminPage() {
   const errors = getRecentErrors(50);
 
   return (
-    <div style={{ maxWidth: 920, margin: '0 auto', padding: '36px 20px 80px' }}>
+    <div className="sestia-admin"><div className="sestia-wordmark">SESTIA</div>
       <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600 }}>Sahibi Paneli</h1>
 
       <section style={{ marginTop: 28 }}>

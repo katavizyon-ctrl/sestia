@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Brand, PageHeading } from '@/components/SestiaExperience';
 
 export default function AdminGirisPage() {
   const [code, setCode] = useState('');
@@ -27,38 +28,5 @@ export default function AdminGirisPage() {
     }
   }
 
-  return (
-    <div className="app">
-      <section className="view">
-        <div className="scroll center" style={{ paddingTop: 100 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 600, textAlign: 'center' }}>Sahibi Paneli</h1>
-          <div className="muted" style={{ marginTop: 6, textAlign: 'center' }}>Yönetici erişim kodunu gir.</div>
-
-          <form onSubmit={submit} style={{ width: '100%', marginTop: 26, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <input
-              type="password"
-              autoFocus
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="Yönetici kodu"
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '14px 16px',
-                borderRadius: 14,
-                border: '1.5px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                fontSize: 16,
-              }}
-            />
-            {error && <div className="errbox">{error}</div>}
-            <button className="btn-primary" type="submit" disabled={busy || !code.trim()}>
-              {busy ? 'Kontrol ediliyor...' : 'Giriş Yap'}
-            </button>
-          </form>
-        </div>
-      </section>
-    </div>
-  );
+  return <div className="app"><section className="view sestia-onboarding"><div className="scroll"><Brand/><PageHeading title="Sahibi Paneli" center>Yönetici erişim kodunu gir.</PageHeading><form className="sestia-form" onSubmit={submit}><label htmlFor="admin-code">Yönetici kodu</label><input id="admin-code" type="password" value={code} onChange={e=>setCode(e.target.value)} placeholder="Yönetici kodu" autoComplete="off" disabled={busy}/>{error&&<div role="alert" className="errbox">{error}</div>}<button className="btn-primary" disabled={busy||!code.trim()}>{busy?'Kontrol ediliyor…':'Giriş yap →'}</button></form></div></section></div>;
 }
