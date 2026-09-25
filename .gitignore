@@ -10,3 +10,7 @@ backups/
 .env
 .env.local
 npm-debug.log*
+
+# SESTIA Bilgi Kütüphanesi — _INBOX içindeki ham kaynaklar Git dışında (yerelde ayrıca yedeklenir)
+SESTIA_BILGI_KUTUPHANESI/**/_INBOX/*
+!SESTIA_BILGI_KUTUPHANESI/**/_INBOX/.gitkeep

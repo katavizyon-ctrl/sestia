@@ -1,0 +1,22 @@
+<svg viewBox="0 0 700 260" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+  <rect width="700" height="260" fill="#FFFFFF"/>
+  <text x="20" y="26" font-size="16" font-weight="bold" fill="#2A2A2A">Palet 07 — Ahşap Uyumlu (Sıcak)</text>
+
+  <g><rect x="0" y="45" width="140" height="140" fill="#F1E7D8"/>
+    <text x="8" y="200" font-size="12" font-weight="bold" fill="#2A2A2A">Fildişi Krem</text>
+    <text x="8" y="216" font-size="11" fill="#555555">#F1E7D8</text></g>
+  <g><rect x="140" y="45" width="140" height="140" fill="#D8C0A0"/>
+    <text x="148" y="200" font-size="12" font-weight="bold" fill="#2A2A2A">Sıcak Bej</text>
+    <text x="148" y="216" font-size="11" fill="#555555">#D8C0A0</text></g>
+  <g><rect x="280" y="45" width="140" height="140" fill="#A85338"/>
+    <text x="288" y="200" font-size="12" font-weight="bold" fill="#FFFFFF">Tuğla Kırmızısı</text>
+    <text x="288" y="216" font-size="11" fill="#EEEEEE">#A85338</text></g>
+  <g><rect x="420" y="45" width="140" height="140" fill="#6E7145"/>
+    <text x="428" y="200" font-size="12" font-weight="bold" fill="#FFFFFF">Zeytin</text>
+    <text x="428" y="216" font-size="11" fill="#EEEEEE">#6E7145</text></g>
+  <g><rect x="560" y="45" width="140" height="140" fill="#4B3527"/>
+    <text x="568" y="200" font-size="12" font-weight="bold" fill="#FFFFFF">Koyu Ceviz</text>
+    <text x="568" y="216" font-size="11" fill="#EEEEEE">#4B3527</text></g>
+
+  <text x="20" y="245" font-size="10.5" fill="#8A8A8A">HEX değerleri dijital (sRGB) renklerdir — fiziksel karşılığı numune ile doğrulayın.</text>
+</svg>

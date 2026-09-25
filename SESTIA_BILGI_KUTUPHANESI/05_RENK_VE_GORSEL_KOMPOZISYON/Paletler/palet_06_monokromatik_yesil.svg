@@ -1,0 +1,22 @@
+<svg viewBox="0 0 700 260" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+  <rect width="700" height="260" fill="#FFFFFF"/>
+  <text x="20" y="26" font-size="16" font-weight="bold" fill="#2A2A2A">Palet 06 — Monokromatik Yeşil</text>
+
+  <g><rect x="0" y="45" width="140" height="140" fill="#DCE3D5"/>
+    <text x="8" y="200" font-size="12" font-weight="bold" fill="#2A2A2A">Açık Adaçayı</text>
+    <text x="8" y="216" font-size="11" fill="#555555">#DCE3D5</text></g>
+  <g><rect x="140" y="45" width="140" height="140" fill="#A8B79A"/>
+    <text x="148" y="200" font-size="12" font-weight="bold" fill="#2A2A2A">Adaçayı</text>
+    <text x="148" y="216" font-size="11" fill="#555555">#A8B79A</text></g>
+  <g><rect x="280" y="45" width="140" height="140" fill="#74886A"/>
+    <text x="288" y="200" font-size="12" font-weight="bold" fill="#FFFFFF">Orta Yeşil</text>
+    <text x="288" y="216" font-size="11" fill="#EEEEEE">#74886A</text></g>
+  <g><rect x="420" y="45" width="140" height="140" fill="#47563E"/>
+    <text x="428" y="200" font-size="12" font-weight="bold" fill="#FFFFFF">Koyu Zeytin</text>
+    <text x="428" y="216" font-size="11" fill="#EEEEEE">#47563E</text></g>
+  <g><rect x="560" y="45" width="140" height="140" fill="#232B1F"/>
+    <text x="568" y="200" font-size="12" font-weight="bold" fill="#FFFFFF">Neredeyse Siyah Yeşil</text>
+    <text x="568" y="216" font-size="11" fill="#EEEEEE">#232B1F</text></g>
+
+  <text x="20" y="245" font-size="10.5" fill="#8A8A8A">HEX değerleri dijital (sRGB) renklerdir — fiziksel karşılığı numune ile doğrulayın.</text>
+</svg>
