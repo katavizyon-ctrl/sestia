@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
-import rawDb, { getState, getHomeMessage } from '@/lib/db';
+import rawDb, { getState, getHomeMessage, getSestiaLibrarySelection, hasStartedRealWork } from '@/lib/db';
 import { getIdentity } from '@/lib/identity';
 import { isEmailReady } from '@/lib/auth';
 import { authUser } from '@/lib/authSchema';
@@ -21,6 +22,15 @@ export async function GET() {
   }
   const state = getState(identity.id);
   const homeMessage = getHomeMessage(identity.id);
+  // Kesif/aktif-kullanici ayrimi: totalDecisions===0 TEK basina yeterli
+  // degil — oda olusturmus/fotograf yuklemis/analiz yaptirmis ama henuz
+  // karar vermemis biri de "gercek calismasi olan" sayilir (bkz. lib/db.js
+  // hasStartedRealWork, gorev brief'i Bolum 7).
+  const hasStartedWork = hasStartedRealWork(identity.id);
+  // proxy.js'in mint ettigi oturum-omurlu cookie — Kesif ekraninin "ayni
+  // ziyarette ayni secim" kuralini uygulayabilmesi icin (bkz. lib/db.js).
+  const visitToken = (await cookies()).get('sestia_visit')?.value || null;
+  const sestiaLibrary = !hasStartedWork ? getSestiaLibrarySelection(identity.id, visitToken) : null;
 
   // Isim kaynagi kimlik turune gore FARKLI: misafir icin isim istemcide
   // (localStorage) tutulur, burada hic bilinmez — bu yuzden sadece hesapli
@@ -40,6 +50,8 @@ export async function GET() {
   return NextResponse.json({
     ...state,
     homeMessage,
+    sestiaLibrary,
+    hasStartedWork,
     identityType: identity.type,
     identityId: identity.id,
     emailReady: isEmailReady(),

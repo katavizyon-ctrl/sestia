@@ -87,6 +87,13 @@ a { color: inherit; }
   position: relative;
 }
 
+/* Sadece Kesif ekrani icin — diger butun ekranlar .app'in standart 460px
+   sutununda kalir (bkz. app/page.js isKesifActive). Genis ekranlarda Oda/
+   Kose/Esya bolumlerinin "dar sutuna sikismis" gorunmesini onlemek icin. */
+@media (min-width: 720px) {
+  .app-wide { max-width: 760px; }
+}
+
 .view { display: flex; flex-direction: column; flex: 1; }
 
 .scroll {
@@ -263,6 +270,67 @@ svg.ic { width: 20px; height: 20px; }
   justify-content: center;
   flex-shrink: 0;
 }
+
+/* ---------------- Kesif ekrani ---------------- */
+
+.kesif-scroll { gap: 22px; }
+
+.kesif-hero { display: flex; flex-direction: column; gap: 8px; }
+.kesif-greeting { font-size: 16px; line-height: 1.55; }
+
+.kesif-spark {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--terracotta-tint);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.kesif-spark svg { color: var(--terracotta); margin-top: 2px; }
+
+.kesif-chat { display: flex; flex-direction: column; }
+
+/* Genis ekranda Oda/Kose/Esya uc ayri yasam ihtimali gibi yan yana durur;
+   dar ekranda (mobil) tek sutuna doner — bkz. brief Bolum 5. */
+.kesif-possibilities {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+@media (min-width: 640px) {
+  .kesif-possibilities { grid-template-columns: repeat(3, 1fr); }
+}
+
+.kesif-possibility {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 18px 20px;
+}
+.kesif-possibility-title {
+  font-family: 'Fraunces', serif;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.kesif-talk-link {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--eucalyptus);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Sabit geri bildirim simgesi (sag alt) son CTA'larin ustunu kapatmasin. */
+.kesif-start { padding-bottom: 64px; }
 
 .actiongrid {
   display: grid;
@@ -504,4 +572,70 @@ input[type=file] { display: none; }
   font: inherit;
   font-size: 15px;
   resize: vertical;
+}
+
+/* ---------------- Hosgeldin (ilk acilis) ekrani ---------------- */
+/* Sadece bu ekrana ozgu — .app/.btn-primary gibi paylasilan siniflari
+   degistirmiyoruz, boylece diger ekranlar etkilenmiyor. */
+
+.hosgeldin-app {
+  background:
+    radial-gradient(ellipse 620px 520px at 88% -6%, rgba(255, 253, 248, 0.95), transparent 60%),
+    radial-gradient(ellipse 500px 420px at 8% 100%, rgba(62, 54, 44, 0.05), transparent 65%),
+    var(--bg);
+  background-repeat: no-repeat;
+  overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .hosgeldin-app {
+    background:
+      radial-gradient(ellipse 620px 520px at 88% -6%, rgba(255, 255, 255, 0.06), transparent 60%),
+      radial-gradient(ellipse 500px 420px at 8% 100%, rgba(0, 0, 0, 0.25), transparent 65%),
+      var(--bg);
+    background-repeat: no-repeat;
+  }
+}
+
+.hosgeldin-shadow {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 62%;
+  max-width: 320px;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 0;
+}
+.hosgeldin-shadow svg { width: 100%; height: auto; display: block; }
+
+.hosgeldin-scroll {
+  position: relative;
+  z-index: 1;
+  justify-content: center;
+  gap: 26px;
+}
+
+.hosgeldin-logo { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.hosgeldin-title { font-size: 23px; font-weight: 700; text-align: center; letter-spacing: 0.01em; }
+
+.hosgeldin-copy { display: flex; flex-direction: column; gap: 10px; max-width: 300px; text-align: center; }
+.hosgeldin-lead { font-family: 'Fraunces', serif; font-size: 21px; font-weight: 600; color: var(--terracotta); }
+.hosgeldin-question { font-size: 16.5px; font-weight: 500; line-height: 1.4; }
+.hosgeldin-invite { font-size: 15px; font-weight: 700; margin-top: 2px; }
+
+.hosgeldin-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--terracotta);
+  color: var(--on-accent);
+  border-radius: 999px;
+  padding: 16px 26px;
+  font-size: 15.5px;
+  font-weight: 600;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 4px;
+  box-shadow: 0 10px 24px rgba(166, 124, 90, 0.28);
 }

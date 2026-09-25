@@ -11,6 +11,10 @@ backups/
 .env.local
 npm-debug.log*
 
-# SESTIA Bilgi Kütüphanesi — _INBOX içindeki ham kaynaklar Git dışında (yerelde ayrıca yedeklenir)
-SESTIA_BILGI_KUTUPHANESI/**/_INBOX/*
-!SESTIA_BILGI_KUTUPHANESI/**/_INBOX/.gitkeep
+# SESTIA Bilgi Kütüphanesi — _INBOX ham kaynakları Git dışında (yerelde ayrıca yedeklenir), yalnızca .gitkeep izlenir
+# Root _INBOX: kategorisi henüz belirlenmemiş genel havuz
+SESTIA_BILGI_KUTUPHANESI/_INBOX/*
+!SESTIA_BILGI_KUTUPHANESI/_INBOX/.gitkeep
+# Kategori _INBOX'ları: alanı belli, henüz işlenmemiş materyal
+SESTIA_BILGI_KUTUPHANESI/02_KUTUPHANE/**/_INBOX/*
+!SESTIA_BILGI_KUTUPHANESI/02_KUTUPHANE/**/_INBOX/.gitkeep

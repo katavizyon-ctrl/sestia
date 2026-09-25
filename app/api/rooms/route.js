@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getIdentity } from '@/lib/identity';
-import { createRoom, getRoomsForDevice } from '@/lib/db';
+import { creations, getRoomsForDevice } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -22,6 +22,10 @@ export async function POST(req) {
   if (!name) {
     return NextResponse.json({ error: 'name_required' }, { status: 400 });
   }
-  const room = createRoom(identity.id, name);
-  return NextResponse.json(room);
+  try {
+    return NextResponse.json(creations.room(identity.id, body.operationKey, name));
+  } catch (error) {
+    if (!error.status) console.error('room_create_failed', { code: error.code });
+    return NextResponse.json({ error: error.status ? error.message : 'create_failed' }, { status: error.status || 500 });
+  }
 }

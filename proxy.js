@@ -53,6 +53,19 @@ export function proxy(req) {
       path: '/',
     });
   }
+
+  // Sestia Kütüphanesi'nin "yeni ziyaret ile sayfa yenileme aynı şey
+  // değildir" kuralı icin: expires/maxAge YOK — bu bilerek bir OTURUM
+  // cookie'si (taraycı kapanınca silinir), sayfa yenilemede kalıcı. Yeni bir
+  // değer SADECE cookie hiç yoksa üretilir (bkz. lib/db.js:getSestiaLibrarySelection).
+  if (!req.cookies.get('sestia_visit')?.value) {
+    res.cookies.set('sestia_visit', crypto.randomUUID(), {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+    });
+  }
   return res;
 }
 

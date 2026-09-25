@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getState, getRecentDecisions, getInspirationCache, setInspirationCache } from '@/lib/db';
-import { generateWeeklyTips } from '@/lib/anthropic';
+import { generateWeeklyTips, formatDecisionSummary, TIPS_CONTENT_VERSION } from '@/lib/anthropic';
 import { getIdentity } from '@/lib/identity';
 
 export const runtime = 'nodejs';
@@ -21,18 +21,22 @@ export async function GET() {
 
   const cached = getInspirationCache(identity.id);
   const cacheAge = cached ? Date.now() - new Date(`${cached.created_at}Z`).getTime() : Infinity;
-  if (cached && cached.decision_count_at_generation === state.totalDecisions && cacheAge < CACHE_MAX_AGE_MS) {
-    return NextResponse.json(JSON.parse(cached.payload_json));
+  const cachedPayload = cached ? JSON.parse(cached.payload_json) : null;
+  // Sürümsüz (eski talimatla üretilmiş) önbellek geçersiz sayılır ve yeniden
+  // üretilince üzerine yazılır — toplu silme yok.
+  if (cached && cached.decision_count_at_generation === state.totalDecisions && cacheAge < CACHE_MAX_AGE_MS &&
+      cachedPayload?.contentVersion === TIPS_CONTENT_VERSION) {
+    return NextResponse.json(cachedPayload);
   }
 
   const decisions = getRecentDecisions(identity.id, 30);
   if (decisions.length === 0) {
     return NextResponse.json({ error: 'not_enough_data' }, { status: 404 });
   }
-  const summaryText = decisions.map((d) => `- ${d.category} · ${d.room} · ${d.recommendation}`).join('\n');
+  const summaryText = formatDecisionSummary(decisions);
 
   try {
-    const tips = await generateWeeklyTips(summaryText);
+    const tips = { ...(await generateWeeklyTips(summaryText)), contentVersion: TIPS_CONTENT_VERSION };
     setInspirationCache(identity.id, tips, state.totalDecisions);
     return NextResponse.json(tips);
   } catch (err) {

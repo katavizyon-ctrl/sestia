@@ -8,18 +8,23 @@ export default function FeedbackButton({ screen }) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState(null);
 
   async function submit(e) {
     e.preventDefault();
     const clean = message.trim();
     if (!clean || sending) return;
     setSending(true);
+    setError(null);
     try {
-      await fetch('/api/feedback', {
+      // fetch 401/500'de throw etmez — res.ok kontrol edilmezse sunucu
+      // kaydetmediği hâlde "Gönderildi" gösterilir.
+      const res = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: clean, screen }),
       });
+      if (!res.ok) throw new Error('feedback_failed');
       setSent(true);
       setMessage('');
       setTimeout(() => {
@@ -27,7 +32,8 @@ export default function FeedbackButton({ screen }) {
         setOpen(false);
       }, 1200);
     } catch {
-      // sessizce yut, testçi butonu tekrar deneyebilir
+      // Mesaj textarea'da kalıyor, kullanıcı tekrar deneyebilir.
+      setError('Mesajın gönderilemedi. Tekrar dener misin?');
     } finally {
       setSending(false);
     }
@@ -57,6 +63,7 @@ export default function FeedbackButton({ screen }) {
               maxLength={2000}
               disabled={sending}
             />
+            {error && <div role="alert" className="errbox">{error}</div>}
             <button className="btn-primary" type="submit" disabled={!message.trim() || sending}>
               {sent ? 'Gönderildi, teşekkürler!' : sending ? 'Gönderiliyor...' : 'Gönder'}
             </button>

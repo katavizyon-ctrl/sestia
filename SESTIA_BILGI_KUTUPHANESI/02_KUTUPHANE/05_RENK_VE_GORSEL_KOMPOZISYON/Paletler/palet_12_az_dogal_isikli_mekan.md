@@ -44,7 +44,7 @@ Az pencereli bir çalışma köşesi duvarı (sıcak beyaz) + bal sarısı bir r
 
 ## Aydınlatma ve uygulama notu
 
-Bu palet, düşük doğal ışığı YOK SAYMAZ, onu telafi etmeye çalışır — düşük Kelvin (sıcak, ~2700K) yapay aydınlatma ile birlikte kullanıldığında en güçlü etkiyi verir. **Açık not:** "az ışıklı bir mekânda doygunluğun ne kadar artırılması gerektiği" konusunda kesin, ölçülebilir bir kural bu kütüphanede henüz doğrulanmamıştır — bu bir sonraki araştırma konusu olarak işaretlenmiştir (bkz. `../../90_ARASTIRMA_VE_KAYNAKLAR/RENK_ARASTIRMASI_01.md`).
+Bu palet, düşük doğal ışığı YOK SAYMAZ, onu telafi etmeye çalışır — düşük Kelvin (sıcak, ~2700K) yapay aydınlatma ile birlikte kullanıldığında en güçlü etkiyi verir. **Açık not:** "az ışıklı bir mekânda doygunluğun ne kadar artırılması gerektiği" konusunda kesin, ölçülebilir bir kural bu kütüphanede henüz doğrulanmamıştır — bu bir sonraki araştırma konusu olarak işaretlenmiştir (bkz. `../../../01_ARASTIRMA/05_RENK_VE_GORSEL_KOMPOZISYON/RENK_ARASTIRMASI_01.md`).
 
 ## Bağlantılar
 

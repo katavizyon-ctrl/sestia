@@ -15,6 +15,10 @@ export async function POST(req) {
 
     const body = await req.json();
     const { items, source } = body || {};
+    // Room confirmation must identify its saved analysis.
+    if (source === 'oda') {
+      return NextResponse.json({ error: 'client_upgrade_required', message: 'Uygulama güncellendi. Sayfayı yenileyip odayı yeniden aç.' }, { status: 409 });
+    }
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'items_required' }, { status: 400 });

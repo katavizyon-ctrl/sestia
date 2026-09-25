@@ -210,11 +210,3 @@ export const REC_META = {
   at: { title: 'Öneri: At', label: 'At', varName: 'stone', Icon: TrashIcon },
   geri_donustur: { title: 'Öneri: Geri Dönüştür', label: 'Geri Dönüştür', varName: 'recycle', Icon: RecycleIcon },
 };
-
-export const REC_DONE_LABEL = {
-  tut: 'tutuldu',
-  sat: 'satışa çıktı',
-  bagisla: 'bağışlandı',
-  at: 'atıldı',
-  geri_donustur: 'geri dönüşüme gitti',
-};

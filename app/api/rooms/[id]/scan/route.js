@@ -1,89 +1,58 @@
 import { NextResponse } from 'next/server';
 import { getIdentity } from '@/lib/identity';
-import { saveRoomScan, saveRoomAnalysis, finalizeRoomAnalysis, getRoomScan, clearRoomScan } from '@/lib/db';
+import { roomDecisions } from '@/lib/db';
 import { validRoomItems, validRoomScanMessages } from '@/lib/anthropic';
 
 export const runtime = 'nodejs';
 
-const SESSION_KEY_RE = /^[A-Za-z0-9-]{8,100}$/;
-
-// Iki adim, BU SIRAYLA: once kalici analiz (room_analyses) yazilir, o
-// basarili olmadan aktif oturum aynasi (room_scans) HICBIR ZAMAN
-// guncellenmez. Boylece room_scans, karsiliginda kalici bir kayit
-// olmayan bir icerigi asla yansitamaz — kalici kayit basarisiz olursa
-// istemci acik bir hata alir, aktif oturum sessizce "ilerlemis" gibi
-// gorunmez (bkz. PLAN: kalici kayit yoksa aktif oturum temizlenemez/var
-// olamaz gereksinimi).
-export async function POST(req, { params }) {
+async function handle(req, params, operation) {
   const identity = await getIdentity();
-  if (!identity) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const { id } = await params;
-  const roomId = Number(id);
-  if (!Number.isInteger(roomId)) {
-    return NextResponse.json({ error: 'invalid_room' }, { status: 400 });
-  }
-
-  const body = await req.json().catch(() => ({}));
-  const items = Array.isArray(body?.items) ? body.items : [];
-  const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const photoIds = Array.isArray(body?.photoIds) ? body.photoIds : [];
-  const sessionKey = typeof body?.sessionKey === 'string' && SESSION_KEY_RE.test(body.sessionKey) ? body.sessionKey : null;
-  if (!sessionKey) {
-    return NextResponse.json({ error: 'invalid_session' }, { status: 400 });
-  }
-  if (items.length > 0 && !validRoomItems(items)) {
-    return NextResponse.json({ error: 'invalid_items' }, { status: 400 });
-  }
-  if (messages.length > 0 && !validRoomScanMessages(messages, 12000)) {
-    return NextResponse.json({ error: 'invalid_messages' }, { status: 400 });
-  }
-
-  const analysisId = saveRoomAnalysis(roomId, identity.id, sessionKey, items, messages, photoIds);
-  if (!analysisId) {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  }
-
-  const scanOk = saveRoomScan(roomId, identity.id, items, messages, analysisId);
-  if (!scanOk) {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  }
-  return NextResponse.json({ ok: true });
-}
-
-// Kararlar onaylandiktan sonra (ya da kullanici acikca vazgectiginde)
-// bekleyen taramayi temizler — artik gercek 'decisions' satirlarina
-// "mezun olmus" demektir, kopya/eski veri olarak kalmasin.
-//
-// Istege bagli finalItems govdesi: kullanicinin manuel degisiklikleri
-// (hariç tutma/oneri degistirme) sonucundaki NIHAI durumu, aktif oturumun
-// baglandigi kalici room_analyses satirina (room_scans.analysis_id —
-// silinmeden HEMEN once okunur) ayri bir sutuna yazar. Bu, Sestia'nin
-// orijinal degerlendirmesini (items_json) HIC degistirmez — ikisi gecmis
-// goruntulenirken ayri ayri gosterilir. En iyi caba: basarisiz olursa
-// (ör. gecersiz finalItems) karar zaten /api/decide'da kaydedilmis
-// oldugundan sessizce atlanir, aktif oturum yine de temizlenir.
-export async function DELETE(req, { params }) {
-  const identity = await getIdentity();
-  if (!identity) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  const { id } = await params;
-  const roomId = Number(id);
-  if (!Number.isInteger(roomId)) {
-    return NextResponse.json({ error: 'invalid_room' }, { status: 400 });
-  }
-
-  const body = await req.json().catch(() => ({}));
-  const finalItems = Array.isArray(body?.finalItems) ? body.finalItems : null;
-  if (finalItems && validRoomItems(finalItems)) {
-    const scan = getRoomScan(roomId, identity.id);
-    if (scan?.analysisId) {
-      finalizeRoomAnalysis(scan.analysisId, roomId, identity.id, finalItems);
+  if (!identity) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const roomId = Number((await params).id);
+  const body = await req.json().catch(() => null);
+  if (!Number.isInteger(roomId) || !body) return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
+  if (body.protocol !== 2) return NextResponse.json({ error: 'client_upgrade_required', message: 'Uygulama güncellendi. Sayfayı yenileyip odayı yeniden aç.' }, { status: 409 });
+  if (operation === 'save' && body.action === 'begin') operation = 'begin';
+  if (operation === 'close' && body.orphanToken) operation = 'closeLegacy';
+  if (operation === 'close' && body.action === 'release') operation = 'releaseEmpty';
+  if (operation === 'begin' || operation === 'releaseEmpty') {
+    if (!/^[A-Za-z0-9-]{8,100}$/.test(body.sessionKey || '') ||
+        (operation === 'begin' && !Number.isInteger(body.expectedGeneration)))
+      return NextResponse.json({ error: 'invalid_session' }, { status: 400 });
+  } else if (operation === 'closeLegacy') {
+    if (!/^[a-f0-9]{64}$/.test(body.orphanToken) || !Number.isInteger(body.expectedGeneration))
+      return NextResponse.json({ error: 'invalid_session' }, { status: 400 });
+  } else {
+    if (operation === 'save') {
+      if (!/^[A-Za-z0-9-]{8,100}$/.test(body.sessionKey || '') || !validRoomItems(body.items) ||
+          !Array.isArray(body.messages) || (body.messages.length && !validRoomScanMessages(body.messages, 12000)) ||
+          !Array.isArray(body.photoIds)) return NextResponse.json({ error: 'invalid_scan' }, { status: 400 });
+    } else if (!Number.isInteger(body.analysisId)) {
+      return NextResponse.json({ error: 'analysis_required' }, { status: 400 });
     }
   }
-
-  clearRoomScan(roomId, identity.id);
-  return NextResponse.json({ ok: true });
+  try {
+    return NextResponse.json(roomDecisions[operation](roomId, identity.id, body));
+  } catch (err) {
+    if (!err.status) console.error('room_scan_failed', { operation, roomId, code: err.code || 'unexpected', message: err.message });
+    if (err.code?.startsWith('SQLITE_BUSY')) return NextResponse.json({ error: 'retry_conflict' }, { status: 409 });
+    return NextResponse.json({ error: err.status ? err.message : 'scan_failed' }, { status: err.status || 500 });
+  }
 }
+
+export async function GET(req, { params }) {
+  const identity = await getIdentity();
+  if (!identity) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    return NextResponse.json(roomDecisions.snapshot(Number((await params).id), identity.id, new URL(req.url).searchParams.get('sessionKey')));
+  } catch (err) {
+    if (!err.status) console.error('room_scan_read_failed', { code: err.code || 'unexpected' });
+    return NextResponse.json({ error: err.status ? err.message : 'scan_failed' }, { status: err.status || 500 });
+  }
+}
+
+export const POST = (req, { params }) => handle(req, params, 'save');
+export const PATCH = (req, { params }) => handle(req, params, 'draft');
+// A late close cannot modify a different analysis or finalize its decisions.
+export const DELETE = (req, { params }) => handle(req, params, 'close');
+export const PUT = (req, { params }) => handle(req, params, 'confirm');
