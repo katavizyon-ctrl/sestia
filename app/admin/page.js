@@ -1,4 +1,4 @@
-import { getActiveDeviceCount, getDailyUsage, getRecentFeedback, getRecentErrors } from '@/lib/db';
+import { getActiveDeviceCount, getDailyUsage, getRecentFeedback, getRecentErrors, getTesterAccounts } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,6 +57,7 @@ export default function AdminPage() {
   const daily = getDailyUsage(7);
   const feedback = getRecentFeedback(50);
   const errors = getRecentErrors(50);
+  const testers = getTesterAccounts();
 
   return (
     <div className="sestia-admin"><div className="sestia-wordmark">SESTIA</div>
@@ -65,6 +66,24 @@ export default function AdminPage() {
       <section style={{ marginTop: 28 }}>
         <div className="label" style={{ color: 'var(--text-muted)' }}>Aktif Cihaz (son 7 gün)</div>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 40, fontWeight: 700 }}>{activeDevices}</div>
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
+          Test Kullanıcıları ({testers.length})
+        </div>
+        <RecordTable
+          rows={testers}
+          columns={[
+            { key: 'email', label: 'E-posta' },
+            { key: 'name', label: 'Hitap', render: (v) => v || '—' },
+            { key: 'first_seen', label: 'İlk kullanım', render: (v) => v || 'Henüz girmedi' },
+            { key: 'last_sign_in_ms', label: 'Son giriş', render: (v) => (v ? new Date(v).toISOString().slice(0, 16).replace('T', ' ') : '—') },
+            { key: 'decisions', label: 'Karar' },
+            { key: 'rooms', label: 'Oda' },
+            { key: 'feedback', label: 'Geri bildirim' },
+          ]}
+        />
       </section>
 
       <section style={{ marginTop: 32 }}>
@@ -82,7 +101,7 @@ export default function AdminPage() {
           rows={feedback}
           columns={[
             { key: 'created_at', label: 'Tarih' },
-            { key: 'device_id', label: 'Cihaz', render: (v) => v.slice(0, 8) },
+            { key: 'device_id', label: 'Kim', render: (v, row) => row.email || (v ? v.slice(0, 8) : '—') },
             { key: 'screen', label: 'Ekran' },
             { key: 'message', label: 'Mesaj' },
           ]}
@@ -97,7 +116,7 @@ export default function AdminPage() {
           rows={errors}
           columns={[
             { key: 'created_at', label: 'Tarih' },
-            { key: 'device_id', label: 'Cihaz', render: (v) => (v ? v.slice(0, 8) : '—') },
+            { key: 'device_id', label: 'Kim', render: (v, row) => row.email || (v ? v.slice(0, 8) : '—') },
             { key: 'screen', label: 'Ekran' },
             { key: 'message', label: 'Mesaj' },
           ]}

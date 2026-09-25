@@ -49,6 +49,9 @@ export default function Page() {
   const [sestiaLibrary, setSestiaLibrary] = useState(null);
   const [homeError, setHomeError] = useState(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [accountEmailFlow, setAccountEmailFlow] = useState(false);
+  // Test grubu modu: misafir yok, e-postayla giriş şart ({ emailReady } | null).
+  const [signInRequired, setSignInRequired] = useState(null);
   const [currentIdentityId, setCurrentIdentityId] = useState(null);
   const [identityType, setIdentityType] = useState(null);
 
@@ -172,8 +175,17 @@ export default function Page() {
       // /api/state artik kimligi sunucu tarafinda (cookie/oturum) cozuyor,
       // deviceId query param'ina bakmiyor — bkz. lib/identity.js.
       const res = await fetch('/api/state');
+      if (res.status === 401) {
+        const body = await res.json().catch(() => ({}));
+        if (body.error === 'sign_in_required') {
+          setSignInRequired({ emailReady: Boolean(body.emailReady) });
+          setHomeError(null);
+          return;
+        }
+      }
       if (!res.ok) throw new Error('state_failed');
       const data = await res.json();
+      setSignInRequired(null);
       setHomeState(data);
       setHomeMessage(data.homeMessage || null);
       setSestiaLibrary(data.sestiaLibrary || null);
@@ -249,9 +261,51 @@ export default function Page() {
       loadRooms();
     }
     if (name === 'inspiration') loadInspiration();
+    if (name === 'account') setAccountEmailFlow(false);
     if (name === 'rooms') { activeRoomRef.current = null; loadRooms(); }
     setView(name);
   }
+
+  // Tarayıcının ve telefonun "geri"si uygulamadan çıkmasın (QA-01). Ana ekran
+  // dışındaki her ekranda tarih kaydında tek bir koruma kaydı tutulur; geri
+  // basıldığında o ekranın kendi "Geri" butonu ne yapıyorsa o yapılır. Ana
+  // ekranda (ve ilk karşılaşmada) koruma yoktur: geri, uygulamadan çıkar.
+  function handleBrowserBack() {
+    if (view === 'decision') return goTo('scan');
+    if (view === 'room-detail') return goTo('rooms');
+    if (view === 'room-analysis') { setHistoryAnalysis(null); setView('room-detail'); return; }
+    if (view === 'celebration') return finishCelebration();
+    goTo('home');
+  }
+  const browserBackRef = useRef(null);
+  browserBackRef.current = handleBrowserBack;
+  const backGuardRef = useRef(false);
+  const skipNextPopRef = useRef(false);
+  const [backTick, setBackTick] = useState(0);
+  useEffect(() => {
+    const atRoot = view === 'home' || showWelcome;
+    if (!atRoot && !backGuardRef.current) {
+      window.history.pushState(null, '');
+      backGuardRef.current = true;
+    } else if (atRoot && backGuardRef.current) {
+      // Uygulama içinden ana ekrana dönüldü: artık gereksiz koruma kaydını geri al.
+      backGuardRef.current = false;
+      skipNextPopRef.current = true;
+      window.history.back();
+    }
+  }, [view, showWelcome, backTick]);
+  useEffect(() => {
+    function onPopState() {
+      if (skipNextPopRef.current) { skipNextPopRef.current = false; return; }
+      if (!backGuardRef.current) return;
+      backGuardRef.current = false;
+      browserBackRef.current?.();
+      // Geri işlemi engellendiyse (ör. kaydedilmemiş taslak onayı) korumayı yeniden kur.
+      setBackTick((tick) => tick + 1);
+    }
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // ---------------- odalarim ----------------
 
@@ -1138,6 +1192,7 @@ export default function Page() {
   const displayName = identityType === 'account' ? homeState.name : userName;
   const mainSurface = ['home', 'discover', 'rooms', 'chat'].includes(view);
   if (!identityLoaded) return <div className="app"><div className="scroll sestia-onboarding"><Brand/><p role="status" className="muted">Birlikte başlıyoruz…</p></div></div>;
+  if (signInRequired) return <div className="app" data-screen="sign-in"><WelcomeView emailOnly emailReady={signInRequired.emailReady} currentIdentityId={null} onGuestStart={() => {}} /></div>;
   if (!currentIdentityId) return <div className="app"><div className="scroll"><PageHeading title="Bağlantıyı yeniden deneyelim."/><p className="errbox">{homeError}</p><button className="btn-primary" onClick={()=>refreshHomeState(true)}>Tekrar dene</button></div></div>;
   return (
     <div className={`app${mainSurface && !showWelcome ? ' sestia-with-nav' : ''}`} data-screen={showWelcome ? 'welcome' : view}>
@@ -1148,11 +1203,18 @@ export default function Page() {
       {view === 'choose' && <ChooseView onBack={()=>goTo('home')} onSingle={()=>selectMode('tek_esya')} onRoom={()=>selectMode('oda_tarama')}/>}
       {!showWelcome && <SestiaChat key={currentIdentityId} active={view==='chat'} context={chatContext} onBack={()=>goTo('home')}/>}
       {view === 'account' && (
-        identityType === 'account' ? <section className="view"><div className="scroll"><Header onBack={()=>goTo('home')}/><PageHeading title="Hesabın">{displayName ? `Merhaba, ${displayName}.` : 'Hesabınla devam ediyorsun.'}</PageHeading><div className="card"><h2>Birlikte baktıklarımız burada.</h2><p className="muted">Odalarına, fotoğraflarına ve kararlarına hesabınla erişebilirsin.</p></div><button className="btn-primary" onClick={()=>goTo('rooms')}>Odalarıma dön</button></div></section> : <WelcomeView
-          onGuestStart={() => {setUserNameState(getUserName(currentIdentityId));goTo('home');}}
+        identityType === 'account' ? <section className="view"><div className="scroll"><Header onBack={()=>goTo('home')}/><PageHeading title="Hesabın">{displayName ? `Merhaba, ${displayName}.` : 'Hesabınla devam ediyorsun.'}</PageHeading><div className="card"><h2>Birlikte baktıklarımız burada.</h2><p className="muted">Odalarına, fotoğraflarına ve kararlarına hesabınla erişebilirsin.</p></div><button className="btn-primary" onClick={()=>goTo('rooms')}>Odalarıma dön</button></div></section> : accountEmailFlow ? <WelcomeView
+          onGuestStart={() => {setUserNameState(getUserName(currentIdentityId));setAccountEmailFlow(false);}}
           currentIdentityId={currentIdentityId}
           emailReady={homeState.emailReady}
           alreadyGuest
+          onBack={() => setAccountEmailFlow(false)}
+        /> : <GuestAccountView
+          currentIdentityId={currentIdentityId}
+          emailReady={homeState.emailReady}
+          onNameSaved={() => setUserNameState(getUserName(currentIdentityId))}
+          onEmail={() => setAccountEmailFlow(true)}
+          onRooms={() => goTo('rooms')}
           onBack={() => goTo('home')}
         />
       )}
@@ -1320,7 +1382,47 @@ const EMAIL_ERROR_LABELS = {
   Verification: 'doğrulama bağlantısı geçersiz veya süresi dolmuş',
 };
 
-function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest, onBack }) {
+// Misafirin hesap ekranı (QA-06): önceden ilk karşılaşma akışı yeniden
+// açılıyordu. Hitap düzenlenebilir; misafir verisinin nerede durduğu dürüstçe
+// söylenir; e-posta ile giriş yalnızca e-posta gönderimi hazırsa sunulur.
+function GuestAccountView({ currentIdentityId, emailReady, onNameSaved, onEmail, onRooms, onBack }) {
+  const savedName = getUserName(currentIdentityId) || '';
+  const [name, setName] = useState(savedName);
+  const [saved, setSaved] = useState(false);
+  const changed = name.trim() !== savedName;
+
+  function saveName(e) {
+    e.preventDefault();
+    if (!changed) return;
+    setUserName(name.trim(), currentIdentityId);
+    onNameSaved();
+    setSaved(true);
+  }
+
+  return <section className="view"><div className="scroll">
+    <Header onBack={onBack} />
+    <PageHeading title="Hesabın">{savedName ? `Merhaba, ${savedName}.` : 'Misafir olarak devam ediyorsun.'}</PageHeading>
+    <form className="sestia-form card" onSubmit={saveName}>
+      <label htmlFor="account-name">Sana nasıl hitap edeyim?</label>
+      <input id="account-name" autoComplete="given-name" value={name} maxLength={60}
+        onChange={(e) => { setName(e.target.value); setSaved(false); }} placeholder="Adın ya da tercih ettiğin hitap" />
+      {saved && <p role="status" className="muted">{name.trim() ? 'Kaydedildi.' : 'Hitabını kaldırdım.'}</p>}
+      <button className="btn-outline" disabled={!changed}>Kaydet</button>
+    </form>
+    <div className="card">
+      <h2>Misafir olarak devam ediyorsun.</h2>
+      <p className="muted">Odaların, fotoğrafların ve kararların bu tarayıcıyla ilişkili. Tarayıcı verilerini silersen ya da başka bir cihazdan girersen onlara ulaşamayabilirsin.</p>
+    </div>
+    {emailReady && <div className="card">
+      <h2>E-posta ile giriş</h2>
+      <p className="muted">Hesapla farklı cihazlardan girebilirsin. Şimdilik misafir olarak kaydettiklerin hesaba taşınmıyor.</p>
+      <button className="btn-outline" onClick={onEmail}>E-posta ile devam et</button>
+    </div>}
+    <button className="btn-primary" onClick={onRooms}>Odalarıma git</button>
+  </div></section>;
+}
+
+function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest, onBack, emailOnly = false }) {
   const initialName = getUserName(currentIdentityId) || '';
   const [name, setName] = useState(initialName);
   const [email, setEmail] = useState('');
@@ -1432,25 +1534,25 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
     if(stage==='method'){setStage('intro');setStatus(null);} else if(onBack) onBack(); else window.location.href='/hosgeldin';
   }
   return <section className="view sestia-onboarding">
-    <div className="scroll"><Header onBack={back}/><Brand/>
+    <div className="scroll"><Header onBack={emailOnly && stage==='intro' ? undefined : back}/><Brand/>
     {stage==='intro' ? <>
       <PageHeading title="Sana nasıl hitap etmemi istersin?" center>Böylece konuşmalarımız daha sana özel olabilir.</PageHeading>
       <form className="sestia-form" onSubmit={continueFromIntro}>
         <label htmlFor="preferred-name">Sana nasıl hitap edelim?</label><input id="preferred-name" autoComplete="given-name" value={name} onChange={e=>setName(e.target.value)} maxLength={60} placeholder="Adın ya da tercih ettiğin hitap"/>
         <button className="btn-primary" disabled={!name.trim()}>Devam Et <ChevronRightIcon/></button>
       </form>
-      <button className="sestia-text-link" onClick={skipName}>Şimdilik isimsiz devam et →</button>
+      {!emailOnly && <button className="sestia-text-link" onClick={skipName}>Şimdilik isimsiz devam et →</button>}
     </> : <>
-      <PageHeading title={status==='sent'?'E-posta yolda.':'Nasıl devam etmek istersin?'} center>{status==='sent'?'Giriş bağlantın için gelen kutuna bak.':name.trim()?`Memnun oldum, ${name.trim()}.`:'İstersen hesabınla ilerleyebilir, istersen misafir olarak devam edebilirsin.'}</PageHeading>
+      <PageHeading title={status==='sent'?'E-posta yolda.':emailOnly?'E-postanla giriş yap.':'Nasıl devam etmek istersin?'} center>{status==='sent'?'Giriş bağlantın için gelen kutuna bak.':emailOnly?`Memnun oldum, ${name.trim()}. Sestia’yı denemek için e-posta adresine bir giriş bağlantısı göndereceğim.`:name.trim()?`Memnun oldum, ${name.trim()}.`:'İstersen hesabınla ilerleyebilir, istersen misafir olarak devam edebilirsin.'}</PageHeading>
       {status==='sent' ? <div className="card sestia-email-sent"><h2>{email}</h2><p className="muted">Bu adrese bir giriş bağlantısı gönderdik. Gelen kutunu ve gereksiz klasörünü kontrol edebilirsin.</p><button className="btn-outline" onClick={()=>setStatus(null)}>E-posta adresini değiştir</button></div> : emailReady ? <form className="card sestia-form" onSubmit={submitEmail}>
         <h2>E-posta ile devam et</h2><p className="muted">İlerlemeni hesabınla koru.</p>
         {!initialName && <><label htmlFor="signup-name">Tercih ettiğin hitap</label><input id="signup-name" required autoComplete="given-name" maxLength={60} value={name} onChange={e=>setName(e.target.value)} placeholder="Hesabın için bir hitap" disabled={submitting}/></>}
         <label htmlFor="signup-email">E-posta adresin</label><input id="signup-email" type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="ornek@email.com" disabled={submitting}/>
-        {status==='not_configured' && <p role="alert" className="errbox">E-posta ile giriş şu anda hazır değil. Misafir olarak devam edebilirsin.</p>}
+        {status==='not_configured' && <p role="alert" className="errbox">{emailOnly?'E-posta ile giriş şu anda hazır değil. Biraz sonra yeniden dener misin?':'E-posta ile giriş şu anda hazır değil. Misafir olarak devam edebilirsin.'}</p>}
         {status==='error' && <p role="alert" className="errbox">E-posta gönderilemedi{errorDetail?` (${EMAIL_ERROR_LABELS[errorDetail]||'Bağlantı sorunu'})`:''}. Tekrar dener misin?</p>}
         <button className="btn-primary" disabled={submitting||!email.trim()||!name.trim()}>{submitting?'Gönderiliyor…':'Giriş bağlantısı gönder'}<ChevronRightIcon/></button>
-      </form> : <div className="card"><h2>Misafir olarak keşfet.</h2><p className="muted">E-posta ile giriş şu anda hazır değil. Sestia ile konuşabilir, fotoğraflarına birlikte bakabilirsin.</p></div>}
-      {emailReady && <div className="sestia-divider">veya</div>}<button className={emailReady?'btn-outline':'btn-primary'} disabled={submitting} onClick={()=>{saveNameLocally();chooseGuest();}}>Misafir olarak devam et <ChevronRightIcon/></button>
+      </form> : emailOnly ? <div className="card"><h2>Giriş şu anda hazır değil.</h2><p className="muted">E-posta gönderimi henüz açılmadı. Biraz sonra yeniden dener misin?</p></div> : <div className="card"><h2>Misafir olarak keşfet.</h2><p className="muted">E-posta ile giriş şu anda hazır değil. Sestia ile konuşabilir, fotoğraflarına birlikte bakabilirsin.</p></div>}
+      {!emailOnly && <>{emailReady && <div className="sestia-divider">veya</div>}<button className={emailReady?'btn-outline':'btn-primary'} disabled={submitting} onClick={()=>{saveNameLocally();chooseGuest();}}>Misafir olarak devam et <ChevronRightIcon/></button></>}
     </>}
     </div>
   </section>;

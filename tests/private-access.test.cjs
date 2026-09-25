@@ -17,3 +17,24 @@ test('private mode admits only the configured email and refuses missing identity
     else process.env.PRIVATE_OWNER_EMAIL = old;
   }
 });
+
+test('email-only test mode: explicit flag or owner-only mode, never by default', () => {
+  const { emailRequired } = require('../lib/privateAccess.cjs');
+  const saved = { owner: process.env.PRIVATE_OWNER_EMAIL, flag: process.env.EMAIL_LOGIN_REQUIRED };
+  try {
+    delete process.env.PRIVATE_OWNER_EMAIL; delete process.env.EMAIL_LOGIN_REQUIRED;
+    assert.equal(emailRequired(), false);
+    process.env.EMAIL_LOGIN_REQUIRED = '1';
+    assert.equal(emailRequired(), true);
+    assert.equal(isAllowedEmail('anyone@example.com'), true, 'the flag does not restrict which email may sign in');
+    process.env.EMAIL_LOGIN_REQUIRED = 'yes';
+    assert.equal(emailRequired(), false);
+    delete process.env.EMAIL_LOGIN_REQUIRED;
+    process.env.PRIVATE_OWNER_EMAIL = 'owner@example.com';
+    assert.equal(emailRequired(), true);
+  } finally {
+    for (const [key, value] of [['PRIVATE_OWNER_EMAIL', saved.owner], ['EMAIL_LOGIN_REQUIRED', saved.flag]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});

@@ -17,10 +17,12 @@ export default function HosgeldinPage() {
           body: JSON.stringify({ code: '' }),
         });
       } catch {}
-      window.location.href = '/';
+      window.location.replace('/');
       return;
     }
-    window.location.href = '/giris';
+    // replace: karşılama ve kod ekranları geçmişte birikmesin; uygulamadaki
+    // "geri" onlara değil, uygulamadan önceki sayfaya çıksın (QA-01).
+    window.location.replace('/giris');
   }
 
   return <div className="app"><section className="view sestia-onboarding sestia-welcome"><div className="scroll">

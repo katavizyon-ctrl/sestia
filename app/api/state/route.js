@@ -6,6 +6,7 @@ import rawDb, { getState, getHomeMessage, getSestiaLibrarySelection, hasStartedR
 import { getIdentity } from '@/lib/identity';
 import { isEmailReady } from '@/lib/auth';
 import { authUser } from '@/lib/authSchema';
+import privateAccess from '@/lib/privateAccess.cjs';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +19,10 @@ const drizzleDb = drizzle(rawDb);
 export async function GET() {
   const identity = await getIdentity();
   if (!identity) {
+    // E-postayla giriş zorunluysa istemci hata ekranı yerine giriş ekranını göstersin.
+    if (privateAccess.emailRequired()) {
+      return NextResponse.json({ error: 'sign_in_required', emailReady: isEmailReady() }, { status: 401 });
+    }
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const state = getState(identity.id);

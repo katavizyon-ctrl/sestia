@@ -18,8 +18,13 @@ export default function GirisPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: code.trim() }),
       });
+      if (res.status === 429) {
+        setError('Çok fazla deneme yapıldı. Birkaç dakika sonra yeniden deneyebilirsin.');
+        return;
+      }
       if (!res.ok) throw new Error('wrong_code');
-      window.location.href = '/';
+      // replace: kod ekranı geçmişte kalmasın, telefonun "geri"si buraya dönmesin.
+      window.location.replace('/');
     } catch {
       setError('Kod yanlış görünüyor, tekrar dener misin?');
     } finally {

@@ -19,6 +19,10 @@ export default function AdminGirisPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: code.trim() }),
       });
+      if (res.status === 429) {
+        setError('Çok fazla deneme yapıldı. Birkaç dakika sonra yeniden deneyebilirsin.');
+        return;
+      }
       if (!res.ok) throw new Error('wrong_code');
       window.location.href = '/admin';
     } catch {

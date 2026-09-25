@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import accessTokens from '@/lib/accessToken.cjs';
+import attemptLimiter from '@/lib/attemptLimiter.cjs';
 
 export const runtime = 'nodejs';
+
+const limiter = attemptLimiter.createAttemptLimiter();
 
 export async function POST(req) {
   // Yerel gelistirmede (next dev -> NODE_ENV='development') paylasimli
@@ -19,9 +22,16 @@ export async function POST(req) {
     if (!expected) {
       return NextResponse.json({ error: 'not_configured' }, { status: 500 });
     }
-    if (code !== expected) {
+    const key = attemptLimiter.clientKey(req.headers);
+    const wait = limiter.blockedFor(key);
+    if (wait) {
+      return NextResponse.json({ error: 'too_many_attempts' }, { status: 429, headers: { 'Retry-After': String(wait) } });
+    }
+    if (!attemptLimiter.codesMatch(code, expected)) {
+      limiter.fail(key);
       return NextResponse.json({ error: 'wrong_code' }, { status: 401 });
     }
+    limiter.succeed(key);
   }
 
   const res = NextResponse.json({ ok: true });

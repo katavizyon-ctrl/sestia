@@ -30,6 +30,15 @@ export async function proxy(req) {
     return response;
   }
 
+  // Erişimi zaten olan kişi karşılama/kod ekranına (ör. telefonun "geri"siyle)
+  // dönerse kodu yeniden sormak yerine uygulamaya al (QA-17).
+  if ((pathname === '/hosgeldin' || pathname === '/giris') &&
+      accessTokens.verifyAccessToken(req.cookies.get('access_ok')?.value, 'access')) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/';
+    return NextResponse.redirect(url);
+  }
+
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
 
   // Auth.js'in kendi rotalari (dogrulama linki, oturum, csrf...) ortak test
