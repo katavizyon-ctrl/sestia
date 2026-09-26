@@ -20,7 +20,10 @@ fs.symlinkSync(path.join(root, 'node_modules'), path.join(directory, 'node_modul
 const env = {};
 for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'COMSPEC', 'ComSpec']) if (process.env[key]) env[key] = process.env[key];
 Object.assign(env, { NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1', AUTH_SECRET, ACCESS_CODE: 'e2e',
-  ADMIN_ACCESS_CODE: 'e2e-admin', ANTHROPIC_API_KEY: 'isolated-no-real-key', EMAIL_LOGIN_REQUIRED: '1' });
+  ADMIN_ACCESS_CODE: 'e2e-admin', ANTHROPIC_API_KEY: 'isolated-no-real-key', EMAIL_LOGIN_REQUIRED: '1',
+  // Placeholder values so the Resend provider is configured; the tests never
+  // request an email, they insert the code into the isolated database instead.
+  RESEND_API_KEY: 're_isolated_not_a_real_key', AUTH_EMAIL_FROM: 'SESTIA E2E <e2e@example.test>' });
 const child = spawn(process.execPath, [path.join(root, 'node_modules/next/dist/bin/next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', String(PORT)],
   { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
@@ -62,6 +65,29 @@ async function createRoom(b, name) {
   assert.equal(res.status, 200, `room create: ${res.status}`);
   return res.json();
 }
+// The existing email/code flow after the email card: precheck with the
+// onboarding name (or none), then the 6-digit code through Auth.js's real
+// callback. The code is stored the way Auth.js stores it (sha256(code+secret)).
+async function signUpWithCode(b, email, name) {
+  const pre = await b.request('/api/account/precheck', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow: 'signup', name, email }) });
+  assert.equal(pre.status, 200, `precheck must not block: ${pre.status} ${await pre.text()}`);
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const Database = require('better-sqlite3');
+  const db = new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
+  db.prepare('INSERT INTO auth_verificationToken (identifier, token, expires) VALUES (?, ?, ?)')
+    .run(email, crypto.createHash('sha256').update(`${code}${AUTH_SECRET}`).digest('hex'), Date.now() + 15 * 60 * 1000);
+  db.close();
+  const res = await b.request(`/api/auth/callback/resend?${new URLSearchParams({ callbackUrl: `${BASE}/`, token: code, email })}`);
+  assert.equal(res.status, 302, `callback: ${res.status}`);
+  assert.equal(new URL(res.headers.get('location'), BASE).pathname, '/', `signed in, not an error page: ${res.headers.get('location')}`);
+  assert.ok(b.jar.get('authjs.session-token'), 'session cookie set');
+  const s = await state(b);
+  assert.equal(s.status, 200);
+  assert.equal(s.body.identityType, 'account');
+  return s.body;
+}
+
 async function waitForServer() {
   const end = Date.now() + 120000;
   while (Date.now() < end) {
@@ -140,6 +166,24 @@ async function check(name, fn) {
     assert.equal(rooms.rooms.length, 0, 'guest rooms are not silently merged into the account');
     a.jar.delete('authjs.session-token');
     assert.equal((await state(a)).body.identityType, 'guest', 'guest identity is intact after the account signs out');
+  });
+
+  await check('named email/account: onboarding "Ayşe" becomes the account name', async () => {
+    const d = browser();
+    await arrive(d);
+    const account = await signUpWithCode(d, 'ayse@example.test', 'Ayşe');
+    assert.equal(account.name, 'Ayşe');
+  });
+
+  await check('anonymous email/account: no name required, none invented, stale pending name discarded', async () => {
+    const e = browser();
+    await arrive(e);
+    // An earlier attempt with a name, then the person skips the name and retries.
+    const stale = await e.request('/api/account/precheck', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow: 'signup', name: 'Eski', email: 'isimsiz@example.test' }) });
+    assert.equal(stale.status, 200);
+    const account = await signUpWithCode(e, 'isimsiz@example.test', '');
+    assert.equal(account.name, null);
   });
 
   console.log(results.join('\n'));

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
-import rawDb, { setPendingSignupName } from '@/lib/db';
+import rawDb, { setPendingSignupName, consumePendingSignupName } from '@/lib/db';
 import { authUser } from '@/lib/authSchema';
 import { isEmailReady } from '@/lib/auth';
 
@@ -41,11 +41,12 @@ export async function POST(req) {
     }
 
     if (flow === 'signup') {
+      // Hitap isteğe bağlı: isimsiz geçen biri hesabını isimsiz açar (nötr
+      // selamlama). Önceki bir denemeden kalan bekleyen isim de atılır ki
+      // hesaba kişinin şimdi vermediği bir isim yazılmasın.
       const name = (body?.name || '').toString().trim().slice(0, 60);
-      if (!name) {
-        return NextResponse.json({ error: 'name_required' }, { status: 400 });
-      }
-      setPendingSignupName(email, name);
+      if (name) setPendingSignupName(email, name);
+      else consumePendingSignupName(email);
       // Resend henuz kurulmadiysa (RESEND_API_KEY VEYA AUTH_EMAIL_FROM
       // eksikse) client'a acikca soyle — e-posta gonderimi calisiyormus
       // gibi davranip gercek signIn() cagrisini tetiklemesin.

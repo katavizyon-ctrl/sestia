@@ -1577,8 +1577,11 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
     onGuestStart();
   }
 
+  // Hitap ekranı tek kaynak: isimsiz geçen biri, yarım yazdığı bir ismi ne
+  // misafir olarak ne de hesaba taşır.
   function skipName() {
     try { if(currentIdentityId) localStorage.setItem('sestia_intro_skipped', currentIdentityId); } catch {}
+    setName('');
     setStage('method');
   }
   function back() {
@@ -1600,11 +1603,10 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
         <button className="btn-primary" disabled={code.length!==6||codeSubmitting}>{codeSubmitting?'Giriş yapılıyor…':'Giriş yap'}<ChevronRightIcon/></button>
         <button type="button" className="btn-outline" onClick={()=>{setStatus(null);setCode('');}}>E-posta adresini değiştir</button></form> : emailReady ? <form className="card sestia-form" onSubmit={submitEmail}>
         <h2>E-posta ile devam et</h2><p className="muted">İlerlemeni hesabınla koru.</p>
-        {!initialName && <><label htmlFor="signup-name">Tercih ettiğin hitap</label><input id="signup-name" required autoComplete="given-name" maxLength={60} value={name} onChange={e=>setName(e.target.value)} placeholder="Hesabın için bir hitap" disabled={submitting}/></>}
         <label htmlFor="signup-email">E-posta adresin</label><input id="signup-email" type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="ornek@email.com" disabled={submitting}/>
         {status==='not_configured' && <p role="alert" className="errbox">{emailOnly?'E-posta ile giriş şu anda hazır değil. Biraz sonra yeniden dener misin?':'E-posta ile giriş şu anda hazır değil. Misafir olarak devam edebilirsin.'}</p>}
         {status==='error' && <p role="alert" className="errbox">E-posta gönderilemedi{errorDetail?` (${EMAIL_ERROR_LABELS[errorDetail]||'Bağlantı sorunu'})`:''}. Tekrar dener misin?</p>}
-        <button className="btn-primary" disabled={submitting||!email.trim()||!name.trim()}>{submitting?'Gönderiliyor…':'Giriş kodu gönder'}<ChevronRightIcon/></button>
+        <button className="btn-primary" disabled={submitting||!email.trim()}>{submitting?'Gönderiliyor…':'Giriş kodu gönder'}<ChevronRightIcon/></button>
       </form> : emailOnly ? <div className="card"><h2>Giriş şu anda hazır değil.</h2><p className="muted">E-posta gönderimi henüz açılmadı. Biraz sonra yeniden dener misin?</p></div> : <div className="card"><h2>Misafir olarak keşfet.</h2><p className="muted">E-posta ile giriş şu anda hazır değil. Sestia ile konuşabilir, fotoğraflarına birlikte bakabilirsin.</p></div>}
       {!emailOnly && <>{emailReady && <div className="sestia-divider">veya</div>}<button className={emailReady?'btn-outline':'btn-primary'} disabled={submitting} onClick={()=>{saveNameLocally();chooseGuest();}}>Misafir olarak devam et <ChevronRightIcon/></button></>}
     </>}
