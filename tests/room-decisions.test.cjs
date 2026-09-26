@@ -495,7 +495,7 @@ function validators() {
 function loadApi(db) {
   let code = fs.readFileSync(path.join(__dirname, '../lib/db.js'), 'utf8');
   const start = code.indexOf('const dataDir =');
-  const end = code.indexOf("db.pragma('journal_mode = WAL');");
+  const end = code.indexOf("withBusyRetry(() => db.pragma('journal_mode = WAL'));");
   assert.ok(start > 0 && end > start, 'connection bootstrap must be explicitly replaced');
   code = code.slice(0, start) + 'const db = __testDb;\n' + code.slice(end);
   code = code.replace(/^import .*;\r?\n/gm, '').replace(/^export default db;?/gm, '').replace(/^export /gm, '');
