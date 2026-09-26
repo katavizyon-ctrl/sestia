@@ -55,6 +55,16 @@ test('unsaved draft is visibly unsaved and confirmation stays disabled', async (
   assert.match(html, /disabled=""[^>]*>Tümünü Onayla/);
 });
 
+test('AUDIT-01: empty recovery still exposes snapshot retry without dirty choices', async () => {
+  const View = await component();
+  const html = renderToStaticMarkup(React.createElement(View, {
+    photos: [], messages: [], items: [base], scanSaved: false, draftDirty: false,
+    recovery: { analysis: null },
+  }));
+  assert.match(html, /Tekrar Dene/);
+  assert.match(html, /disabled=""[^>]*>Tümünü Onayla/);
+});
+
 test('closed history shows correct status and final exclusion controls card appearance', async () => {
   const View = await component();
   const render = extra => renderToStaticMarkup(React.createElement(View, { photos: [], messages: [], items: [base], readOnly: true, ...extra }));

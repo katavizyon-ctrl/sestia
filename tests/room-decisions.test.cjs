@@ -148,6 +148,78 @@ function counts(f) {
     points: f.api.getState('owner').points, total: f.api.getState('owner').totalDecisions };
 }
 
+for (const value of ['tut', 'sat', 'bagisla', 'geri_donustur', 'at']) {
+  test(`AUDIT-02: explicit same-value ${value} survives route, DB, resume and AI`, async t => {
+    const f = fixture(t), s = scan(f);
+    const original = freshItems().map(i => ({ ...i, recommendation: value, modelSuggestion: { recommendation: value, reasoning: 'fixture' } }));
+    const saved = f.store.save(f.roomId, 'owner', { ...s.payload, revision: s.revision, items: original });
+    const choices = [{ id: item.id, recommendation: value, excluded: false, manual: true }];
+    const result = await routeFor(f)('PATCH', { ...saved, choices });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.items[0].manual, true);
+    const row = f.db.prepare('SELECT draft_items_json FROM room_analyses WHERE id=?').get(s.analysisId);
+    assert.equal(JSON.parse(row.draft_items_json)[0].manual, true);
+    const resumed = f.api.getRoomScan(f.roomId, 'owner');
+    assert.equal(resumed.items[0].manual, true);
+    const next = sources.reconcileRoomItems([{ ...item, recommendation: value === 'tut' ? 'at' : 'tut' }], resumed.items, true);
+    assert.equal(next[0].recommendation, value);
+    const replay = await routeFor(f)('PATCH', { ...saved, choices });
+    assert.equal(replay.body.revision, result.body.revision);
+  });
+}
+
+test('AUDIT-02: explicit A-B-A, different choice and exclusion retain intent; invalid manual is rejected', async t => {
+  const f = fixture(t), s = scan(f), request = routeFor(f);
+  for (const manual of ['true', 1, null]) {
+    assert.equal((await request('PATCH', { ...s, choices: [{ id: item.id, recommendation: 'sat', excluded: false, manual }] })).status, 400);
+  }
+  let receipt = s;
+  for (const [recommendation, excluded] of [['tut', false], ['sat', true], ['sat', false]]) {
+    const r = await request('PATCH', { ...receipt, choices: [{ id: item.id, recommendation, excluded, manual: true }] });
+    assert.equal(r.status, 200); receipt = r.body;
+    assert.equal(r.body.items[0].manual, true);
+    assert.equal(r.body.items[0].recommendation, recommendation);
+    assert.equal(r.body.items[0].excluded, excluded);
+  }
+});
+
+test('AUDIT-02: stale manual-only update is not mistaken for an exact replay', t => {
+  const f = fixture(t), s = scan(f);
+  f.store.draft(f.roomId, 'owner', { ...s, choices: [{ id: item.id, recommendation: 'sat', excluded: false, manual: false }] });
+  assert.throws(() => f.store.draft(f.roomId, 'owner', { ...s, choices: [{ id: item.id, recommendation: 'sat', excluded: false, manual: true }] }), /revision_conflict/);
+});
+
+test('AUDIT-02: old payload compatibility preserves known intent without making every item manual', t => {
+  const f = fixture(t), s = scan(f);
+  const untouched = f.store.draft(f.roomId, 'owner', { ...s, choices: [{ id: item.id, recommendation: 'sat', excluded: true }] });
+  assert.equal(untouched.items[0].manual, false);
+  const changed = f.store.draft(f.roomId, 'owner', { ...untouched, choices: [{ id: item.id, recommendation: 'tut', excluded: false }] });
+  assert.equal(changed.items[0].manual, true);
+  const retained = f.store.draft(f.roomId, 'owner', { ...changed, choices: [{ id: item.id, recommendation: 'tut', excluded: false, manual: false }] });
+  assert.equal(retained.items[0].manual, true);
+});
+
+test('AUDIT-02: shuffled five-item payload preserves identity, explicit intent and excluded final decisions', async t => {
+  const f = fixture(t), s = scan(f), request = routeFor(f);
+  const values = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
+  const items = values.map((value, index) => ({ ...freshItems()[0], id: `item-${index + 1}`, recommendation: value }));
+  const saved = f.store.save(f.roomId, 'owner', { ...s.payload, revision: s.revision, items });
+  const choices = items.map((i, index) => ({ id: i.id, recommendation: i.recommendation, manual: index !== 4, excluded: index === 4 })).reverse();
+  const patched = await request('PATCH', { ...saved, choices });
+  assert.equal(patched.status, 200);
+  for (const i of f.api.getRoomScan(f.roomId, 'owner').items) {
+    const expected = choices.find(c => c.id === i.id);
+    assert.equal(i.recommendation, expected.recommendation);
+    assert.equal(i.manual, expected.manual);
+    assert.equal(i.excluded, expected.excluded);
+  }
+  const confirmed = await request('PUT', patched.body);
+  assert.equal(confirmed.body.count, 4);
+  assert.deepEqual(f.db.prepare('SELECT recommendation FROM decisions ORDER BY id').all().map(i => i.recommendation), values.slice(0, 4));
+  const final = f.api.getRoomAnalyses(f.roomId, 'owner')[0].finalItems;
+  assert.equal(final[4].id, 'item-5'); assert.equal(final[4].excluded, true); assert.equal(final[4].manual, false);
+});
+
 test('late FIRST POST of reserved A cannot replace newer B', t => {
   const f = fixture(t);
   f.store.begin(f.roomId, 'owner', { sessionKey: 'old-session-A', expectedGeneration: 0 });

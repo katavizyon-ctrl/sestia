@@ -11,14 +11,14 @@ const { randomUUID } = require('node:crypto');
 // This is not a browser lifecycle test; React rendering is covered separately.
 function client(fetch) {
   const source = fs.readFileSync(path.join(__dirname, '../app/page.js'), 'utf8');
-  const names = ['persistRoomScanIfActive', 'persistRoomDraft', 'confirmRoomDecisions', 'recoverRoomWrite',
-    'loadRecoveredRoomScan', 'setRoomItemRec', 'resumeRoomScan', 'reserveRoomScan', 'roomContext', 'isRoomContext', 'updateRoomPhotos', 'invalidateRoomCoverage',
+  const names = ['retryRoomScanSave', 'persistRoomScanIfActive', 'persistRoomDraft', 'confirmRoomDecisions', 'recoverRoomWrite',
+    'loadRecoveredRoomScan', 'setRoomItemRec', 'toggleRoomExclude', 'resumeRoomScan', 'reserveRoomScan', 'roomContext', 'isRoomContext', 'updateRoomPhotos', 'invalidateRoomCoverage',
     'resetRoomScan', 'addRoomPhotos', 'removeRoomPhoto', 'persistNewRoomScanPhotos', 'retryFailedRoomPhotos',
-    'checkRoomPhotoCoverage', 'startRoomAnalysis', 'sendRoomChat', 'saveRoomScanToRoom', 'openRoom', 'goTo', 'startRoomScanInRoom', 'createRoomAndOpen', 'handleRoomPhotoUpload', 'releaseEmptyRoomScan'];
+    'checkRoomPhotoCoverage', 'startRoomAnalysis', 'sendRoomChat', 'saveRoomScanToRoom', 'openRoom', 'goTo', 'handleBrowserBack', 'startRoomScanInRoom', 'createRoomAndOpen', 'handleRoomPhotoUpload', 'releaseEmptyRoomScan'];
   const ctx = {
     fetch, roomScanClient, roomItemSources, crypto: { randomUUID }, FormData, AbortController, MAX_ROOM_PHOTOS: 6, MAX_UPLOAD_BYTES: 20 * 1024 * 1024, SCAN_PERSIST_ERROR: 'save failed',
     activeRoomRef: { current: { id: 7 } }, roomAnalysisSessionKeyRef: { current: 'session-key' },
-    roomReceiptRef: { current: null }, roomWriteRef: { current: null }, roomPhotosRef: { current: [] },
+    roomReceiptRef: { current: null }, roomInitialSnapshotRef: { current: null }, roomConfirmationRef: { current: null }, roomWriteRef: { current: null }, roomPhotosRef: { current: [] },
     roomRequestRef: { current: null }, roomLeaseRef: { current: null }, roomSessionRef: { current: 0 }, roomFilesRef: { current: [] },
     roomPhotoVersionRef: { current: 0 }, roomCoverageRequestRef: { current: null }, roomUploadsRef: { current: new Map() },
     roomAnalysisPhotosRef: { current: [] }, roomSaveFlowRef: { current: null }, roomCreateOperationRef: { current: null }, roomDetailRequestRef: { current: null }, createRoomOperationRef: { current: null }, galleryUploadRef: { current: null },
@@ -40,9 +40,8 @@ function client(fetch) {
     const match = new RegExp('  (?:async )?function ' + name + '\\(').exec(source);
     assert.ok(match, name);
     const start = match.index;
-    const tail = source.slice(start + match[0].length);
-    const end = /\n  (?:async )?function /.exec(tail);
-    vm.runInContext(source.slice(start, start + match[0].length + end.index), ctx);
+    const end = source.indexOf('\n  }', start) + '\n  }'.length;
+    vm.runInContext(source.slice(start, end), ctx);
   }
   return ctx;
 }
@@ -52,6 +51,171 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const photo = text => new File([text], text + '.jpg', { type: 'image/jpeg' });
 const event = (...files) => ({ target: { files, value: 'chosen' } });
+
+test('AUDIT-02: explicit choices survive PATCH payload, hydration, resume and subsequent AI for all enums', async () => {
+  for (const value of ['tut', 'sat', 'bagisla', 'geri_donustur', 'at']) {
+    let payload;
+    const c = client(async (url, options) => {
+      payload = JSON.parse(options.body);
+      return response({ ...receipt, revision: 2, items: payload.choices });
+    });
+    c.roomReceiptRef.current = { ...receipt, roomId: 7 };
+    c.roomItems = [{ id: 'item-1', recommendation: value, manual: false, excluded: false }];
+    c.setRoomItemRec(0, value);
+    c.setRoomItemRec(0, value === 'tut' ? 'sat' : 'tut');
+    c.setRoomItemRec(0, value); // A -> B -> A before any write still expresses intent.
+    c.toggleRoomExclude(0); c.toggleRoomExclude(0);
+    await c.persistRoomDraft();
+    assert.equal(payload.choices[0].manual, true);
+    assert.equal(c.roomItems[0].manual, true);
+    c.roomDetail = { id: 7, photos: [], scanStatus: {}, scan: { ...receipt, revision: 2, items: c.roomItems, messages: [] } };
+    c.resumeRoomScan();
+    const next = roomItemSources.reconcileRoomItems([{ id: 'item-1', recommendation: value === 'tut' ? 'sat' : 'tut' }], c.roomItems, true);
+    assert.equal(next[0].recommendation, value);
+    assert.equal(next[0].manual, true);
+    assert.equal(next[0].excluded, false);
+  }
+});
+
+for (const committed of [false, true]) for (const dirty of [false, true]) {
+  test(`AUDIT-01: initial ${committed ? 'lost response' : '500 before commit'}, dirty=${dirty}, safely retries exact snapshot`, async () => {
+    const writes = []; let stored = null, revision = 0;
+    const c = client(async (url, options) => {
+      if (!options.method) return response({ active: true, sessionKey: receipt.sessionKey,
+        analysis: stored ? { ...receipt, items: stored, messages: [], photoIds: [] } : null });
+      const body = JSON.parse(options.body); writes.push({ method: options.method, body });
+      if (writes.length === 1) {
+        if (committed) { stored = body.items; revision = 1; throw new Error('lost response'); }
+        return { ok: false, status: 500, json: async () => ({ error: 'scan_failed' }) };
+      }
+      if (options.method === 'POST') {
+        assert.deepEqual(body, writes[0].body, 'retry must not silently replace a committed original snapshot');
+        stored = body.items; revision = 1;
+        return response(receipt);
+      }
+      assert.equal(body.revision, revision);
+      stored = body.choices; revision++;
+      return response({ ...receipt, revision, items: stored });
+    });
+    c.roomItems[0].manual = false;
+    assert.equal(await c.persistRoomScanIfActive(c.roomItems, []), false);
+    assert.equal(!!c.roomRecovery.analysis, committed);
+    if (dirty) c.setRoomItemRec(0, 'tut');
+    assert.equal(await c.retryRoomScanSave(), true);
+    assert.equal(c.roomScanSaved, true); assert.equal(c.roomDraftDirty, false);
+    assert.equal(c.roomItems[0].recommendation, dirty ? 'tut' : 'sat');
+    assert.equal(stored[0].recommendation, c.roomItems[0].recommendation);
+    assert.equal(c.roomError, null);
+    assert.deepEqual(writes.map(w => w.method), dirty ? ['POST', 'POST', 'PATCH'] : ['POST', 'POST']);
+    assert.equal(c.roomReceiptRef.current.revision, dirty ? 2 : 1);
+  });
+}
+
+test('AUDIT-01: draft button without receipt recovers initial snapshot; repeated click cannot overlap', async () => {
+  const retry = deferred(); let posts = 0, patches = 0;
+  const c = client(async (url, options) => {
+    if (!options.method) return response({ active: true, sessionKey: receipt.sessionKey, analysis: null });
+    if (options.method === 'POST') {
+      if (++posts === 1) throw new Error('offline');
+      return retry.promise;
+    }
+    patches++; return response({ ...receipt, revision: 2, items: JSON.parse(options.body).choices });
+  });
+  await c.persistRoomScanIfActive(c.roomItems, []); c.setRoomItemRec(0, 'tut');
+  const saving = c.persistRoomDraft();
+  await c.persistRoomDraft(); await c.retryRoomScanSave();
+  assert.equal(posts, 2); assert.equal(patches, 0);
+  retry.resolve(response(receipt)); assert.equal(await saving, true);
+  assert.equal(patches, 1); assert.equal(c.roomItems[0].recommendation, 'tut');
+});
+
+test('AUDIT-01: newer server revision on retry remains explicit recovery and never erases local choices', async () => {
+  const bodies = [];
+  const c = client(async (url, options) => {
+    if (!options.method) return response({ active: true, sessionKey: receipt.sessionKey,
+      analysis: { ...receipt, revision: 3, items: [{ id: 'item-1', recommendation: 'at' }], messages: [], photoIds: [] } });
+    bodies.push(JSON.parse(options.body));
+    return { ok: false, status: bodies.length === 1 ? 500 : 409, json: async () => ({ error: 'revision_conflict' }) };
+  });
+  await c.persistRoomScanIfActive(c.roomItems, []); c.setRoomItemRec(0, 'tut');
+  assert.equal(await c.retryRoomScanSave(), false);
+  assert.equal(await c.retryRoomScanSave(), false);
+  assert.equal(bodies.length, 3); assert.deepEqual(bodies[1], bodies[0]);
+  assert.equal(c.roomItems[0].recommendation, 'tut'); assert.equal(c.roomDraftDirty, true);
+  assert.equal(c.roomScanSaved, false); assert.equal(c.roomReceiptRef.current, null);
+  assert.equal(c.roomRecovery.analysis.revision, 3);
+});
+
+test('AUDIT-01: empty or closed recovery cannot silently discard local choices', () => {
+  for (const analysis of [null, { closed: true }]) {
+    const c = client(() => { throw new Error('unexpected network'); });
+    c.roomRecovery = { roomId: 7, analysis };
+    c.roomDraftDirty = true; c.roomScanSaved = false;
+    let opened = 0, prompts = 0;
+    c.openRoom = () => { opened++; };
+    c.window.confirm = () => { prompts++; return false; };
+    c.loadRecoveredRoomScan();
+    assert.equal(prompts, 1); assert.equal(opened, 0);
+    assert.equal(c.roomItems[0].recommendation, 'sat');
+  }
+});
+
+test('AUDIT-01: chat after failed initial save recovers original snapshot and choices before calling AI', async () => {
+  const calls = []; let first = true;
+  const c = client(async (url, options) => {
+    if (!options.method) return response({ active: true, sessionKey: receipt.sessionKey, analysis: null });
+    if (url === '/api/analyze') {
+      calls.push('AI'); return response({ items: c.roomItems, messages: c.roomMessages });
+    }
+    calls.push(options.method);
+    if (first) { first = false; throw new Error('before commit'); }
+    const body = JSON.parse(options.body);
+    return response({ ...receipt, revision: calls.length, ...(options.method === 'PATCH' ? { items: body.choices } : {}) });
+  });
+  c.roomMessages = [{ role: 'user', content: 'fixture' }, { role: 'assistant', content: '{}' }];
+  await c.persistRoomScanIfActive(c.roomItems, c.roomMessages);
+  c.setRoomItemRec(0, 'tut'); c.roomChatDraft = 'fixture followup';
+  await c.sendRoomChat({ preventDefault() {} });
+  assert.deepEqual(calls, ['POST', 'POST', 'PATCH', 'AI', 'POST']);
+  assert.equal(c.roomItems[0].recommendation, 'tut'); assert.equal(c.roomItems[0].manual, true);
+});
+
+for (const fails of [false, true]) {
+  test(`AUDIT-03: browser back isolates late PUT ${fails ? 'failure' : 'success'} from a new scan and its own PUT`, async () => {
+    const old = deferred(), fresh = deferred(); let puts = 0, reads = 0;
+    const c = client((url, options) => {
+      if (!options.method) { reads++; return response({}); }
+      puts++;
+      return puts === 1 ? old.promise : fresh.promise;
+    });
+    c.roomReceiptRef.current = { ...receipt, roomId: 7 }; c.roomScanSaved = true;
+    const previous = c.confirmRoomDecisions();
+    c.handleBrowserBack();
+    assert.equal(c.view, 'home'); assert.equal(c.roomConfirming, false);
+    c.roomReceiptRef.current = { ...receipt, analysisId: 10, roomId: 7, sessionKey: c.roomAnalysisSessionKeyRef.current };
+    c.view = 'room-review'; c.roomScanSaved = true;
+    const next = c.confirmRoomDecisions();
+    assert.equal(c.roomConfirming, true);
+    if (fails) old.reject(new Error('old network error'));
+    else old.resolve(response({ state: { streak: 90 }, count: 9, replayed: false }));
+    await previous;
+    assert.equal(c.roomConfirming, true); assert.equal(c.view, 'room-review'); assert.equal(reads, 0);
+    fresh.resolve(response({ state: { streak: 1 }, count: 1, replayed: true })); await next;
+    assert.equal(c.roomConfirming, false); assert.equal(c.view, 'celebration');
+    assert.equal(c.celebration.pointsGained, 0);
+  });
+}
+
+test('AUDIT-03: same-render double confirmation is locked synchronously, not only by React state', async () => {
+  const pending = deferred(); let puts = 0;
+  const c = client(() => { puts++; return pending.promise; });
+  c.roomReceiptRef.current = { ...receipt, roomId: 7 }; c.roomScanSaved = true;
+  c.setRoomConfirming = () => {}; // React state value in this render stays false until rerender.
+  const first = c.confirmRoomDecisions(), second = c.confirmRoomDecisions();
+  assert.equal(puts, 1);
+  pending.resolve(response({ state: { streak: 1 }, count: 1, replayed: false }));
+  await Promise.all([first, second]);
+});
 
 test('B01: A upload completes during B compression without losing either entry or photoId', async () => {
   const upload = deferred(), compression = deferred();

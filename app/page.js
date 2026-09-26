@@ -120,10 +120,13 @@ export default function Page() {
   // anahtari — resetRoomScan'de tazelenir (bkz. lib/db.js saveRoomAnalysis).
   const roomAnalysisSessionKeyRef = useRef(null);
   const roomReceiptRef = useRef(null);
+  const roomConfirmationRef = useRef(null);
   const roomWriteRef = useRef(null);
   const roomLeaseRef = useRef(null);
   const [roomRecovery, setRoomRecovery] = useState(null);
   const [roomDraftDirty, setRoomDraftDirty] = useState(false);
+  // Keep the original uncertain first POST separate from subsequent local choices.
+  const roomInitialSnapshotRef = useRef(null);
   const [roomDraftError, setRoomDraftError] = useState(null);
   const [roomLegacyApprovalUnknown, setRoomLegacyApprovalUnknown] = useState(false);
   useEffect(() => {
@@ -465,11 +468,14 @@ export default function Page() {
   function loadRecoveredRoomScan() {
     const saved = roomRecovery?.analysis;
     if (!saved || saved.closed || roomRecovery.sessionKey !== saved.sessionKey) {
+      if ((roomDraftDirty || (!roomScanSaved && roomItems.length > 0)) &&
+          !window.confirm('Kaydedilmemiş taslak seçimlerin var. Kaydetmeden çıkılsın mı?')) return;
       openRoom(roomRecovery.roomId);
       return;
     }
     if (!window.confirm('Sunucuda kayıtlı sürüm açılsın mı? Bu ekrandaki kaydedilmemiş değişiklikler yerine kayıtlı seçimler ve sohbet gösterilecek.')) return;
     roomReceiptRef.current = { ...saved, roomId: roomRecovery.roomId };
+    roomInitialSnapshotRef.current = null;
     const samePhotos = roomAnalysisPhotosRef.current.filter(p => saved.photoIds?.includes(p.photoId));
     const canKeepFiles = samePhotos.length === saved.photoIds?.length && samePhotos.every(p => p.file);
     roomAnalysisPhotosRef.current = canKeepFiles ? samePhotos : (saved.photoIds || []).map(id => ({ id, photoId: id, url: '/api/rooms/' + roomRecovery.roomId + '/photos/' + id }));
@@ -594,7 +600,7 @@ export default function Page() {
   }
 
 
-  async function persistRoomScanIfActive(items, messages, photoIdsOverride, context = roomContext()) {
+  async function persistRoomScanIfActive(items, messages, photoIdsOverride, context = roomContext(), preserveDraft = false) {
     const roomId = context.roomId;
     if (!roomId || !isRoomContext(context)) return false;
     const sessionKey = context.sessionKey;
@@ -606,14 +612,16 @@ export default function Page() {
     try {
       const photoIds = photoIdsOverride
         || roomAnalysisPhotosRef.current.map(p => p.photoId);
+      if (!roomReceiptRef.current) roomInitialSnapshotRef.current = { items, messages, photoIds, context };
       const receipt = await roomScanClient.write(fetch, roomId, 'POST', { items, messages, photoIds, sessionKey, revision });
       if (!isRoomContext(context)) return false;
       roomReceiptRef.current = { ...receipt, roomId };
+      roomInitialSnapshotRef.current = null;
       setRoomRecovery(null);
-      setRoomDraftDirty(false);
+      setRoomDraftDirty(preserveDraft);
       setRoomDraftError(null);
-      setRoomScanSaved(true);
-      setRoomError((current) => (current === SCAN_PERSIST_ERROR ? null : current));
+      setRoomScanSaved(!preserveDraft);
+      setRoomError(null);
       return true;
     } catch (error) {
       if (!isRoomContext(context)) return false;
@@ -661,7 +669,9 @@ export default function Page() {
       if (!isRoomContext(context)) return;
       if (!upload.ok) throw new Error('photo_save_failed');
       roomAnalysisPhotosRef.current = photos.map((p, i) => ({ ...p, photoId: upload.photoIds[i] }));
-      const saved = await persistRoomScanIfActive(items, messages, upload.photoIds, target);
+      const saved = roomInitialSnapshotRef.current && !roomReceiptRef.current
+        ? await persistRoomDraft()
+        : await persistRoomScanIfActive(items, messages, upload.photoIds, target);
       if (!isRoomContext(context)) return;
       if (!saved) { setRoomScanSaveError('Analiz sonucu kesinleşmedi. Sunucudaki kaydı kontrol edebilir veya aynı işlemi tekrar deneyebilirsin.'); return; }
       setRoomScanSavedRoomName(room.name); setRoomScanNeedsRoom(false);
@@ -719,18 +729,30 @@ export default function Page() {
   // dener — sessionKey ayni oldugu icin kopya satir olusturmaz, sadece
   // ayni kalici satiri gunceller.
   function retryRoomScanSave() {
-    if (roomDraftDirty) { persistRoomDraft(); return; }
+    if (roomDraftDirty || (!roomReceiptRef.current && roomInitialSnapshotRef.current)) return persistRoomDraft();
     if (!roomFilesRef.current.length && !roomReceiptRef.current) {
       setRoomDraftError('Bu eski taramanın analiz bağlantısı yok. Kayıt korunuyor; onay için yeni bir tarama başlat.');
-      return;
+      return false;
     }
-    persistRoomScanIfActive(roomItems, roomMessages);
+    return persistRoomScanIfActive(roomItems, roomMessages);
   }
 
   async function persistRoomDraft() {
     const context = roomContext();
-    const receipt = roomReceiptRef.current;
-    if (!receipt || roomWriteRef.current) {
+    if (roomWriteRef.current) return false;
+    let receipt = roomReceiptRef.current;
+    if (!receipt) {
+      const initial = roomInitialSnapshotRef.current;
+      if (initial && isRoomContext(initial.context)) {
+        // Replay the exact first snapshot. A lost response is idempotent; a
+        // newer server revision stays a conflict, never an automatic overwrite.
+        const saved = await persistRoomScanIfActive(initial.items, initial.messages, initial.photoIds, initial.context, roomDraftDirty);
+        if (!saved || !isRoomContext(context)) return false;
+        if (!roomDraftDirty) return true;
+        receipt = roomReceiptRef.current;
+      }
+    }
+    if (!receipt) {
       setRoomDraftError('Taslak henüz kaydedilemedi. Önce analizin kaydını tamamla.');
       return false;
     }
@@ -740,12 +762,13 @@ export default function Page() {
     try {
       const saved = await roomScanClient.write(fetch, receipt.roomId, 'PATCH', {
         analysisId: receipt.analysisId, revision: receipt.revision,
-        choices: roomItems.map(i => ({ id: i.id, recommendation: i.recommendation, excluded: i.excluded })),
+        choices: roomItems.map(i => ({ id: i.id, recommendation: i.recommendation, excluded: i.excluded, manual: i.manual })),
       });
       if (roomReceiptRef.current !== receipt) return false;
       roomReceiptRef.current = { ...receipt, ...saved };
       setRoomRecovery(null);
       setRoomItems(saved.items);
+      setRoomError(null);
       setRoomDraftDirty(false);
       setRoomScanSaved(true);
       return true;
@@ -974,6 +997,10 @@ export default function Page() {
     setRoomRecovery(null);
     setRoomLegacyApprovalUnknown(false);
     roomReceiptRef.current = null;
+    roomInitialSnapshotRef.current = null;
+    // Invalidate ownership before publishing idle state for the next scan.
+    roomConfirmationRef.current = null;
+    setRoomConfirming(false);
     roomWriteRef.current = null;
     setRoomDraftDirty(false);
     setRoomDraftError(null);
@@ -1128,7 +1155,7 @@ export default function Page() {
     const messages = roomMessages;
     const photos = roomAnalysisPhotosRef.current;
     try {
-      if (roomDraftDirty && roomReceiptRef.current && !(await persistRoomDraft())) return;
+      if (roomDraftDirty && (roomReceiptRef.current || context.roomId) && !(await persistRoomDraft())) return;
       if (!isRoomContext(context) || version !== roomPhotoVersionRef.current) return;
       const formData = new FormData();
       photos.forEach(p => formData.append('image', p.file));
@@ -1166,11 +1193,15 @@ export default function Page() {
 
   async function confirmRoomDecisions() {
     const receipt = roomReceiptRef.current;
-    if (!receipt || roomLegacyApprovalUnknown || roomConfirming || roomRequestRef.current || roomWriteRef.current || roomDraftDirty || !roomScanSaved) return;
+    if (!receipt || roomLegacyApprovalUnknown || roomConfirming || roomConfirmationRef.current || roomRequestRef.current || roomWriteRef.current || roomDraftDirty || !roomScanSaved) return;
+    const context = roomContext();
+    const operation = {};
+    roomConfirmationRef.current = operation; // Synchronous lock, before React rerenders.
+    const ownsOperation = () => isRoomContext(context) && roomConfirmationRef.current === operation;
     setRoomConfirming(true);
     try {
       const result = await roomScanClient.write(fetch, receipt.roomId, 'PUT', { analysisId: receipt.analysisId, revision: receipt.revision });
-      if (roomReceiptRef.current !== receipt) return;
+      if (!ownsOperation() || roomReceiptRef.current !== receipt) return;
       setHomeState(result.state);
       if (!result.replayed) roomItems.filter(it => !it.excluded).forEach(it => logEvent('decision_confirmed', {
         category: it.category, recommendation: it.recommendation, changedFromSuggestion: !!it.manual, source: 'oda',
@@ -1179,9 +1210,11 @@ export default function Page() {
         summary: `${result.count} eşya için kararların kaydedildi.` });
       setView('celebration');
     } catch (error) {
-      if (roomReceiptRef.current === receipt) await recoverRoomWrite(receipt.roomId, receipt.sessionKey, error);
+      if (ownsOperation() && roomReceiptRef.current === receipt) await recoverRoomWrite(receipt.roomId, receipt.sessionKey, error, context);
     } finally {
-      if (roomReceiptRef.current === receipt) setRoomConfirming(false);
+      // Receipt replacement can suppress a result, but only this operation may
+      // clear its loading state. A late A cleanup must never unlock pending B.
+      if (ownsOperation()) { roomConfirmationRef.current = null; setRoomConfirming(false); }
     }
   }
   function selectMode(mode) {
@@ -2251,7 +2284,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
             </div>
           )}
           {scanSaved && !draftDirty && !legacyApprovalUnknown && <div className="muted" role="status">Taslak seçimlerin kaydedildi. Kararlar yalnızca onayladığında oluşur.</div>}
-          {!needsRoom && !scanSaved && !draftDirty && !legacyApprovalUnknown && !recovery && (
+          {!needsRoom && !scanSaved && !draftDirty && !legacyApprovalUnknown && (
             <div className="errbox" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span>{scanSaving ? 'Analiz kaydediliyor...' : 'Analiz henüz kalıcı olarak kaydedilemedi — kararlarını onaylayamazsın.'}</span>
               {!scanSaving && <button type="button" className="btn-outline" onClick={onRetryScanSave}>Tekrar Dene</button>}
