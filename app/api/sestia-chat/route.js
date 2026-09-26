@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { chatFreely, validChatMessages, SECTION_CONTEXT_LABELS } from '@/lib/anthropic';
 import { getIdentity } from '@/lib/identity';
+import { logEvent } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -29,6 +30,8 @@ export async function POST(req) {
       : null;
 
     const result = await chatFreely(messages, sectionContext);
+    // Sahibi panelinde test kullanıcısının sohbeti ne kadar kullandığını göstermek için; mesaj içeriği yazılmaz.
+    try { logEvent(identity.id, 'chat_message', { turn: messages.length }); } catch {}
     return NextResponse.json(result);
   } catch (err) {
     console.error('sestia_chat_failed', err);
