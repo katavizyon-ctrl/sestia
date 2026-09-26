@@ -571,7 +571,9 @@ function loadApi(db) {
   assert.ok(start > 0 && end > start, 'connection bootstrap must be explicitly replaced');
   code = code.slice(0, start) + 'const db = __testDb;\n' + code.slice(end);
   code = code.replace(/^import .*;\r?\n/gm, '').replace(/^export default db;?/gm, '').replace(/^export /gm, '');
-  const ctx = { __testDb: db, roomDecisionStore, path, process: { cwd: () => path.dirname(db.name) }, creationStore: require(path.join(__dirname, '../lib/creationStore.cjs')) };
+  const ctx = { __testDb: db, roomDecisionStore, path, process: { cwd: () => path.dirname(db.name) },
+    creationStore: require(path.join(__dirname, '../lib/creationStore.cjs')),
+    toparlaStore: require(path.join(__dirname, '../lib/toparlaStore.cjs')) };
   vm.createContext(ctx);
   vm.runInContext(code + ';globalThis.api={roomDecisions,createRoom,getState,getRoomScan,getRoomAnalyses,saveRoomAnalysis,saveRoomScan,recordDecisions,creations,addRoomPhoto};', ctx);
   return ctx.api;

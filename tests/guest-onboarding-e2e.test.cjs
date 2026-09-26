@@ -1,5 +1,6 @@
-// Guest onboarding regression (explicit run): node tests/guest-onboarding-e2e.cjs
-// Starts an isolated `next dev` in a temp copy with its own empty database.
+// Guest onboarding regression — part of `npm test` (also runnable directly:
+// node tests/guest-onboarding-e2e.test.cjs). Starts an isolated `next dev` in
+// a temp copy with its own empty database.
 // No credentials, user data or network services; EMAIL_LOGIN_REQUIRED=1 is set
 // on purpose, because that is how staging refused guests before the fix.
 const fs = require('node:fs');

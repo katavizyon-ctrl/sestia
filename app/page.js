@@ -172,6 +172,23 @@ export default function Page() {
   // scan/decision/celebration arasinda gecerliligini korur.
   const activeRoomRef = useRef(null);
 
+  // ---- toparlanmış halini gör ----
+  // photos.length===0 icin ayri bir ekran yok: buton tiklaninca mevcut
+  // yukleme aksiyonlarina isaret eden kisa bir not gosterilir (bkz.
+  // RoomDetailView) — ikinci bir yukleme sistemi icat edilmiyor.
+  const [toparlaNotice, setToparlaNotice] = useState(false);
+  const [toparlaStatus, setToparlaStatus] = useState('select'); // select | confirm | generating | done | error
+  const [toparlaPhotoId, setToparlaPhotoId] = useState(null);
+  const [toparlaResult, setToparlaResult] = useState(null);
+  const [toparlaError, setToparlaError] = useState(null);
+  // Bu akistan cikildiginda (goTo ile herhangi bir yere) gecersiz kilinir —
+  // geç kalan bir yanit artik gösterilmekte olmayan bir ekrani güncellemez.
+  const toparlaRequestRef = useRef(null);
+  // operationKey SADECE acik "Toparlanmış halini oluştur" tikinda uretilir;
+  // ayni (oda,fotograf) icin tekrar tiklamalar (cift dokunma, bekleyen
+  // istek) ayni anahtari kullanir — yeni bir ucretli cagri asla acmaz.
+  const toparlaOperationRef = useRef(null);
+
   useEffect(() => {
     logEvent('session_start');
     refreshHomeState(true);
@@ -267,6 +284,7 @@ export default function Page() {
     if (view === 'room-review' && name !== view && roomDraftDirty &&
         !window.confirm('Kaydedilmemiş taslak seçimlerin var. Kaydetmeden çıkılsın mı?')) return;
     roomDetailRequestRef.current = null;
+    toparlaRequestRef.current = null;
     setRoomCreating(false);
     if ((view === 'scan' || view === 'decision') && name !== view) resetSingleScan();
     // Also cancel a begin request started from room-detail before navigation.
@@ -291,6 +309,7 @@ export default function Page() {
   function handleBrowserBack() {
     if (view === 'decision') return goTo('scan');
     if (view === 'room-detail') return goTo('rooms');
+    if (view === 'toparla') return goTo('room-detail');
     if (view === 'room-analysis') { setHistoryAnalysis(null); setView('room-detail'); return; }
     if (view === 'celebration') return finishCelebration();
     goTo('home');
@@ -786,6 +805,92 @@ export default function Page() {
     setRoomScanSaveError(null);
     setRoomScanSavedRoomName(null);
     setView('room-review');
+  }
+
+  // "Odaya birlikte bakalım"dan ayrı, tamamen bağımsız bir akış: mevcut
+  // fotoğraflardan biri, aynı oda toparlanmış haliyle görselleştirilir.
+  // Fotoğraf yoksa yeni bir yükleme ekranı icat etmek yerine mevcut
+  // yükleme aksiyonlarına işaret eden bir not gösterilir (RoomDetailView).
+  function startToparlaInRoom() {
+    if (!roomDetail) return;
+    if (!roomDetail.photos.length) { setToparlaNotice(true); return; }
+    setToparlaNotice(false);
+    const request = {};
+    toparlaRequestRef.current = request;
+    toparlaOperationRef.current = null;
+    setToparlaResult(null);
+    setToparlaError(null);
+    const single = roomDetail.photos.length === 1;
+    setToparlaPhotoId(single ? roomDetail.photos[0].id : null);
+    setToparlaStatus(single ? 'confirm' : 'select');
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    // setView directly, not goTo: goTo unconditionally clears
+    // toparlaRequestRef (by design, so leaving the flow invalidates it) —
+    // going through it here would erase the request we just armed above.
+    setView('toparla');
+  }
+
+  // Kullanıcı birden fazla fotoğraf arasından TEK birini açıkça seçer —
+  // hiçbir zaman sessizce/otomatik seçim yapılmaz.
+  function selectToparlaPhoto(photoId) {
+    if (toparlaRequestRef.current) setToparlaPhotoId(photoId);
+    setToparlaStatus('confirm');
+  }
+
+  // Tek ücretli çağrı, SADECE "Toparlanmış halini oluştur" tıklamasından
+  // gelir. Aynı (oda, fotoğraf) için bekleyen bir istek varsa (çift dokunma)
+  // ikinci bir çağrı hiç başlamaz; operationKey ise sunucu tarafında da aynı
+  // isteğin ikinci bir ücretli çağrı açmasını engeller (bkz. lib/toparlaStore.cjs).
+  async function submitToparla() {
+    if (!roomDetail || !toparlaPhotoId) return;
+    const request = toparlaRequestRef.current;
+    if (!request) return;
+    if (toparlaOperationRef.current?.pending) return;
+    if (!toparlaOperationRef.current || toparlaOperationRef.current.roomId !== roomDetail.id || toparlaOperationRef.current.photoId !== toparlaPhotoId) {
+      toparlaOperationRef.current = { operationKey: crypto.randomUUID(), roomId: roomDetail.id, photoId: toparlaPhotoId };
+    }
+    const operation = toparlaOperationRef.current;
+    operation.pending = true;
+    setToparlaStatus('generating');
+    setToparlaError(null);
+    try {
+      const res = await fetch(`/api/rooms/${roomDetail.id}/toparla`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoId: toparlaPhotoId, operationKey: operation.operationKey }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (toparlaRequestRef.current !== request) return; // bu akıştan ayrılındı
+      if (!res.ok) {
+        // Kesin bir 4xx reddi: bu operationKey'i bir daha sunma, yeni bir
+        // deneme yeni bir anahtar üretsin.
+        if (res.status >= 400 && res.status < 500) toparlaOperationRef.current = null;
+        throw new Error(body.error || 'toparla_failed');
+      }
+      if (body.status === 'failed') {
+        toparlaOperationRef.current = null;
+        setToparlaError('Görsel oluşturulamadı. Tekrar dener misin?');
+        setToparlaStatus('error');
+        return;
+      }
+      setToparlaResult(body);
+      setToparlaStatus('done');
+    } catch {
+      if (toparlaRequestRef.current === request) {
+        setToparlaError('Görsel oluşturulamadı. Tekrar dener misin?');
+        setToparlaStatus('error');
+      }
+    } finally {
+      operation.pending = false;
+    }
+  }
+
+  // Açık bir kullanıcı eylemiyle yeni bir deneme başlatır — otomatik tekrar
+  // deneme yok, her zaman yeni bir operationKey (yeni bir ücretli çağrı hakkı).
+  function retryToparla() {
+    toparlaOperationRef.current = null;
+    setToparlaError(null);
+    setToparlaStatus('confirm');
   }
 
   // Odanin daha once tamamlanmis (kalici) bir analizini salt-okunur
@@ -1352,8 +1457,25 @@ export default function Page() {
           onRetryPhoto={galleryUploadRef.current?.roomId === roomDetail?.id ? () => handleRoomPhotoUpload() : null}
           onScanHere={startScanInRoom}
           onRoomScanHere={startRoomScanInRoom}
+          onToparlaHere={startToparlaInRoom}
+          toparlaNotice={toparlaNotice}
           onResumeScan={resumeRoomScan}
           onViewAnalysis={viewRoomAnalysis}
+        />
+      )}
+
+      {view === 'toparla' && (
+        <ToparlaView
+          room={roomDetail}
+          photoId={toparlaPhotoId}
+          status={toparlaStatus}
+          result={toparlaResult}
+          error={toparlaError}
+          onBack={() => goTo('room-detail')}
+          onSelectPhoto={selectToparlaPhoto}
+          onChangePhoto={() => setToparlaStatus('select')}
+          onConfirm={submitToparla}
+          onRetry={retryToparla}
         />
       )}
 
@@ -1763,7 +1885,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onResumeScan, onViewAnalysis }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, toparlaNotice, onResumeScan, onViewAnalysis }) {
   return (
     <section className="view">
       <div className="scroll sestia-room-detail">
@@ -1818,6 +1940,12 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
               <button className="btn-outline" onClick={onRoomScanHere} disabled={uploading}>
                 <GridIcon style={{ width: 18, height: 18 }} /> Odaya birlikte bakalım
               </button>
+              <button className="btn-outline" onClick={onToparlaHere} disabled={uploading}>
+                <LayersIcon style={{ width: 18, height: 18 }} /> Toparlanmış halini gör
+              </button>
+              {toparlaNotice && (
+                <p className="muted" role="status">Önce bir fotoğraf ekle — yukarıdaki “Fotoğraf Ekle” ile başlayabilirsin.</p>
+              )}
             </div>
 
             {room.analyses && room.analyses.length > 0 && (
@@ -1868,6 +1996,103 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
         )}
       </div>
     </section>
+  );
+}
+
+// "Toparlanmış halini gör" — Odaya birlikte bakalım'dan tamamen ayrı, kendi
+// içinde kapalı bir akış: fotoğraf seçimi (birden fazlaysa) → onay →
+// üretim → Önce/Sonra. Tek fotoğrafta seçim ekranı hiç gösterilmez.
+function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPhoto, onChangePhoto, onConfirm, onRetry }) {
+  if (!room) return <section className="view"><div className="scroll"><Header onBack={onBack} /><div className="thinking"><div className="spinner" /></div></div></section>;
+
+  const photoUrl = (id) => `/api/rooms/${room.id}/photos/${id}`;
+  const selected = room.photos.find((p) => p.id === photoId) || null;
+
+  return (
+    <section className="view">
+      <div className="scroll sestia-room-detail">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Toparlanmış halini gör</h2>
+        </div>
+
+        {status === 'select' && (
+          <>
+            <PageHeading title="Hangi açıyla başlayalım?" center>Toparlanmış halini görmek istediğin fotoğrafı seç.</PageHeading>
+            <div className="photogrid">
+              {room.photos.map((photo) => (
+                <button key={photo.id} type="button" className={`photothumb sestia-photo-pick${photo.id === photoId ? ' selected' : ''}`}
+                  onClick={() => onSelectPhoto(photo.id)} aria-pressed={photo.id === photoId}>
+                  <img src={photoUrl(photo.id)} alt="" />
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {status === 'confirm' && selected && (
+          <>
+            <PageHeading title="Bu fotoğrafla devam edelim mi?" center>Sestia, odayı olduğu gibi bırakır; yalnızca dağınıklığı toplar.</PageHeading>
+            <img className="sestia-room-hero" src={photoUrl(selected.id)} alt={room.name} />
+            <p className="muted">Bu bir yeniden dekorasyon değil — mobilya, mimari ve kamera açısı aynı kalır; yalnızca eşyalar toparlanmış hâliyle görselleştirilir.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button className="btn-primary" onClick={onConfirm}>Toparlanmış halini oluştur <ChevronRightIcon /></button>
+              {room.photos.length > 1 && <button className="btn-outline" onClick={onChangePhoto}>Başka fotoğraf seç</button>}
+            </div>
+          </>
+        )}
+
+        {status === 'generating' && (
+          <div className="thinking">
+            <div className="spinner" />
+            <p className="muted">Odanı toparlanmış haliyle görüyoruz…</p>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <>
+            <div className="errbox">{error || 'Görsel oluşturulamadı. Tekrar dener misin?'}</div>
+            <button className="btn-primary" onClick={onRetry}>Tekrar dene</button>
+          </>
+        )}
+
+        {status === 'done' && result && selected && (
+          <>
+            <PageHeading title="İşte toparlanmış hâli." center>Bu bir görselleştirme — her eşyanın gerçekte nereye kaldırıldığının garantisi değil.</PageHeading>
+            <BeforeAfterSlider
+              beforeSrc={photoUrl(selected.id)}
+              afterSrc={`/api/rooms/${room.id}/toparla/${result.id}`}
+              width={result.outputWidth}
+              height={result.outputHeight}
+            />
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// Bağımlılıksız, dokunmatik-uyumlu Önce/Sonra kıyaslaması: native bir range
+// input tam kaplayan, görünmez bir sürükleme yüzeyi olarak kullanılır —
+// klavye ve dokunma erişilebilirliği bedava gelir.
+function BeforeAfterSlider({ beforeSrc, afterSrc, width, height }) {
+  const [value, setValue] = useState(50);
+  const ratio = width && height ? `${width} / ${height}` : '3 / 4';
+  return (
+    <div className="sestia-baf" style={{ aspectRatio: ratio }}>
+      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" />
+      <div className="sestia-baf-after-wrap" style={{ clipPath: `inset(0 ${100 - value}% 0 0)` }}>
+        <img className="sestia-baf-img" src={afterSrc} alt="Sonra" />
+      </div>
+      <div className="sestia-baf-line" style={{ left: `${value}%` }} aria-hidden="true" />
+      <input
+        type="range" min="0" max="100" value={value}
+        onChange={(e) => setValue(Number(e.target.value))}
+        className="sestia-baf-range" aria-label="Önce ve sonra karşılaştırma kaydırıcısı"
+      />
+      <span className="sestia-baf-label sestia-baf-label-before" aria-hidden="true">Önce</span>
+      <span className="sestia-baf-label sestia-baf-label-after" aria-hidden="true">Sonra</span>
+    </div>
   );
 }
 
