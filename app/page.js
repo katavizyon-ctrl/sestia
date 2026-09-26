@@ -5,7 +5,7 @@ import { compressImage, getLastRoom, setLastRoom, getUserName, setUserName } fro
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES, ASSISTANT_NAME } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
-import { Brand, Header, PageHeading, MainNavigation, HomeDashboard, DiscoverView, ChooseView, SestiaChat, RoomCover } from '@/components/SestiaExperience';
+import { Brand, Header, PageHeading, MainNavigation, HomeDashboard, DiscoverView, ChooseView, SestiaChat, ConversationPanel, RoomCover } from '@/components/SestiaExperience';
 import roomItemSources from '@/lib/roomItemSources.cjs';
 import roomScanClient from '@/lib/roomScanClient.cjs';
 import {
@@ -2058,12 +2058,24 @@ function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPho
 
         {status === 'done' && result && selected && (
           <>
-            <PageHeading title="İşte toparlanmış hâli." center>Bu bir görselleştirme — her eşyanın gerçekte nereye kaldırıldığının garantisi değil.</PageHeading>
+            <PageHeading title="Böyle görünse nasıl olur?" center>Sestia'nın bu odayı toparlanmış hâliyle görselleştirmesi — eşyaların gerçekte nereye taşındığının kaydı değil.</PageHeading>
             <BeforeAfterSlider
               beforeSrc={photoUrl(selected.id)}
               afterSrc={`/api/rooms/${room.id}/toparla/${result.id}`}
               width={result.outputWidth}
               height={result.outputHeight}
+            />
+            {/* Odaya birlikte bakalım'dan bağımsız, ayrı bir sohbet yüzeyi —
+                aynı yeniden kullanılabilir ConversationPanel, sadece bu
+                sonucun context'iyle. key={result.id}: farklı bir sonuca
+                geçilirse (yeni üretim), önceki konuşma değil, tertemiz bir
+                tane başlar. */}
+            <ConversationPanel
+              key={result.id}
+              productContext={{ kind: 'toparla_result', toparlaResultId: result.id }}
+              emptyStateHeading="Ne düşünüyorsun?"
+              emptyStateCopy="Masadaki kutular, köşedeki sandalye, ışık — aklına ne geliyorsa yazabilirsin."
+              className="sestia-embedded-chat"
             />
           </>
         )}

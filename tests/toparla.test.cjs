@@ -22,6 +22,7 @@ function loadApi(db) {
     roomDecisionStore: require('../lib/roomDecisionStore.cjs'),
     creationStore: require('../lib/creationStore.cjs'),
     toparlaStore: require('../lib/toparlaStore.cjs'),
+    chatAttachmentStore: require('../lib/chatAttachmentStore.cjs'),
   };
   vm.createContext(ctx);
   vm.runInContext(code + ';globalThis.api={createRoom,creations,toparla,addRoomPhoto,getRoomDetail};', ctx);
