@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import { getIdentity } from '@/lib/identity';
+import { getIdentity, isAccountIdentity } from '@/lib/identity';
 import { toparla } from '@/lib/db';
 import openaiImage from '@/lib/openaiImage.cjs';
 
@@ -33,6 +33,11 @@ function publicResult(row) {
 export async function POST(req, { params }) {
   const identity = await getIdentity();
   if (!identity) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // Toparla is account-only: paid generation must never be reachable by a
+  // guest, regardless of entry point (Room Detail here, or chat — see
+  // app/api/chat/toparla/route.js). Checked before touching the room/photo
+  // at all, so a guest never even reaches the claim/idempotency layer.
+  if (!isAccountIdentity(identity)) return NextResponse.json({ error: 'account_required' }, { status: 403 });
 
   const { id } = await params;
   const roomId = Number(id);

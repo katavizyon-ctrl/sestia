@@ -71,13 +71,44 @@ function defaultEmptyStateCopy(productContext, entryLabel) {
   return 'Bir soruyla, bir fikirle ya da merakla başlayabiliriz.';
 }
 
+// Bağımlılıksız, dokunmatik-uyumlu Önce/Sonra kıyaslaması: native bir range
+// input tam kaplayan, görünmez bir sürükleme yüzeyi olarak kullanılır —
+// klavye ve dokunma erişilebilirliği bedava gelir. Room Detail'in Toparla
+// ekranı VE ConversationPanel'in gömülü Toparla akışı bunun AYNI kopyasını
+// kullanır — ikinci bir slider icat edilmez.
+export function BeforeAfterSlider({ beforeSrc, afterSrc, width, height }) {
+  const [value, setValue] = useState(50);
+  const ratio = width && height ? `${width} / ${height}` : '3 / 4';
+  return (
+    <div className="sestia-baf" style={{ aspectRatio: ratio }}>
+      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" />
+      <div className="sestia-baf-after-wrap" style={{ clipPath: `inset(0 ${100 - value}% 0 0)` }}>
+        <img className="sestia-baf-img" src={afterSrc} alt="Sonra" />
+      </div>
+      <div className="sestia-baf-line" style={{ left: `${value}%` }} aria-hidden="true" />
+      <input
+        type="range" min="0" max="100" value={value}
+        onChange={(e) => setValue(Number(e.target.value))}
+        className="sestia-baf-range" aria-label="Önce ve sonra karşılaştırma kaydırıcısı"
+      />
+      <span className="sestia-baf-label sestia-baf-label-before" aria-hidden="true">Önce</span>
+      <span className="sestia-baf-label sestia-baf-label-after" aria-hidden="true">Sonra</span>
+    </div>
+  );
+}
+
 // The reusable conversation core — no outer screen chrome, so it can be used
 // both full-screen (SestiaChat, below) and embedded directly under a
 // feature's own result UI (Toparla). Each mounted instance owns its own
 // state; there is no shared/global conversation state to race across
 // surfaces — a stale response from one instance structurally cannot land in
 // another one's messages.
-export function ConversationPanel({ productContext, entryLabel, active = true, emptyStateHeading = 'Aklında ne var?', emptyStateCopy, className = '' }) {
+//
+// identityType/onRequireAccount: only needed for the embedded
+// view_tidied_room flow — an account can confirm and generate inline; a
+// guest is shown the same account gate as Room Detail's Toparla, via the
+// SAME onRequireAccount callback wired at Page level (no second login UI).
+export function ConversationPanel({ productContext, entryLabel, active = true, emptyStateHeading = 'Aklında ne var?', emptyStateCopy, className = '', identityType, onRequireAccount }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [attachedFile, setAttachedFile] = useState(null);
@@ -85,12 +116,29 @@ export function ConversationPanel({ productContext, entryLabel, active = true, e
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [suggestedAction, setSuggestedAction] = useState(null);
+  // Inline "Toparlanmış halini gör" widget, entirely separate from the
+  // message array sent to the server — it's a UI-side result, not something
+  // fed back into the model's context (see audit §14). null | { status:
+  // 'account-gate'|'confirm'|'generating'|'done'|'error', attachmentId,
+  // result?, error? }. attachmentId is frozen the moment the widget opens —
+  // attaching a NEW image afterward updates suggestedAction on the next
+  // turn, but never mutates an already-open toparlaFlow's target.
+  const [toparlaFlow, setToparlaFlow] = useState(null);
   const request = useRef(null);
   const log = useRef(null);
   const fileInputRef = useRef(null);
+  // Request-ownership token for the inline Toparla generation call — reset
+  // ("Yeni sohbet") or unmount invalidates it, so a late response can never
+  // land in a conversation the user has already moved on from.
+  const toparlaRequestRef = useRef(null);
+  // Same operation-key-per-(attachment) discipline as the Room Detail flow
+  // (app/page.js submitToparla) — a double tap while a request is already
+  // pending is a no-op, not a second paid call.
+  const toparlaOperationRef = useRef(null);
 
   useEffect(() => () => {
     request.current?.abort();
+    toparlaRequestRef.current = null;
     if (attachedPreviewUrl) URL.revokeObjectURL(attachedPreviewUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -173,7 +221,71 @@ export function ConversationPanel({ productContext, entryLabel, active = true, e
     }
   }
 
+  // Tapping "Toparlanmış halini gör" itself never calls anything paid — it
+  // only opens the confirm card (account) or the account gate (guest). The
+  // target attachment is frozen here, in this exact call, from the
+  // server-validated suggestedAction — never re-derived from "whatever the
+  // latest image is" later.
+  function openToparlaFlow(attachmentId) {
+    toparlaOperationRef.current = null;
+    const token = {};
+    toparlaRequestRef.current = token;
+    setToparlaFlow({ status: identityType === 'account' ? 'confirm' : 'account-gate', attachmentId });
+  }
+  function dismissToparlaFlow() {
+    toparlaRequestRef.current = null;
+    setToparlaFlow(null);
+  }
+
+  // The ONLY function in this component that can trigger the paid call —
+  // fired exclusively by the explicit "Toparlanmış halini oluştur" tap.
+  async function confirmToparlaFlow() {
+    if (!toparlaFlow || toparlaFlow.status !== 'confirm') return;
+    const token = toparlaRequestRef.current;
+    const attachmentId = toparlaFlow.attachmentId;
+    if (!toparlaOperationRef.current || toparlaOperationRef.current.attachmentId !== attachmentId) {
+      toparlaOperationRef.current = { operationKey: crypto.randomUUID(), attachmentId };
+    }
+    const operation = toparlaOperationRef.current;
+    if (operation.pending) return; // double-tap guard
+    operation.pending = true;
+    setToparlaFlow({ status: 'generating', attachmentId });
+    try {
+      const res = await fetch('/api/chat/toparla', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attachmentId, operationKey: operation.operationKey }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (toparlaRequestRef.current !== token) return; // reset/left mid-flight
+      if (!res.ok) {
+        // Definitive 4xx rejection: never resubmit this operationKey, a new
+        // explicit retry mints a fresh one.
+        if (res.status >= 400 && res.status < 500) toparlaOperationRef.current = null;
+        throw new Error(body.error || 'toparla_failed');
+      }
+      if (body.status === 'failed') {
+        toparlaOperationRef.current = null;
+        setToparlaFlow({ status: 'error', attachmentId, error: 'Görsel oluşturulamadı. Tekrar dener misin?' });
+        return;
+      }
+      setToparlaFlow({ status: 'done', attachmentId, result: body });
+    } catch {
+      if (toparlaRequestRef.current === token) {
+        setToparlaFlow({ status: 'error', attachmentId, error: 'Görsel oluşturulamadı. Tekrar dener misin?' });
+      }
+    } finally {
+      operation.pending = false;
+    }
+  }
+  // Explicit user action only — never automatic. A fresh operationKey means
+  // a genuinely new attempt, not a resend of the one that just failed.
+  function retryToparlaFlow() {
+    toparlaOperationRef.current = null;
+    setToparlaFlow((prev) => (prev ? { status: 'confirm', attachmentId: prev.attachmentId } : null));
+  }
+
   const canRenderSuggestedAction = chatComposerClient.isRenderableAction(suggestedAction);
+  const isViewTidiedAction = suggestedAction && typeof suggestedAction === 'object' && suggestedAction.type === 'view_tidied_room';
 
   return <div className={`sestia-conversation-panel ${className}`}>
     {!messages.length && <div className="card"><h2>{emptyStateHeading}</h2><p className="muted">{emptyStateCopy || defaultEmptyStateCopy(productContext, entryLabel)}</p></div>}
@@ -186,8 +298,50 @@ export function ConversationPanel({ productContext, entryLabel, active = true, e
         </div>
       ))}
     </div>
-    {canRenderSuggestedAction && (
+    {canRenderSuggestedAction && !isViewTidiedAction && (
       <button type="button" className="sestia-text-link" onClick={() => fileInputRef.current?.click()}>Fotoğraf ekle</button>
+    )}
+    {canRenderSuggestedAction && isViewTidiedAction && !toparlaFlow && (
+      <button type="button" className="sestia-text-link" onClick={() => openToparlaFlow(suggestedAction.attachmentId)}>Toparlanmış halini gör</button>
+    )}
+    {toparlaFlow?.status === 'account-gate' && (
+      <div className="card">
+        <h2>Bunu senin için oluşturabilmem için giriş yapman gerekiyor.</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button type="button" className="btn-primary" onClick={onRequireAccount}>E-posta ile devam et</button>
+          <button type="button" className="btn-outline" onClick={dismissToparlaFlow}>Şimdilik değil</button>
+        </div>
+      </div>
+    )}
+    {toparlaFlow?.status === 'confirm' && (
+      <div className="card">
+        <img className="sestia-room-hero" src={`/api/chat/attachments/${toparlaFlow.attachmentId}`} alt="" />
+        <p className="muted">Bu bir yeniden dekorasyon değil — mobilya, mimari ve kamera açısı aynı kalır; yalnızca eşyalar toparlanmış hâliyle görselleştirilir.</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button type="button" className="btn-primary" onClick={confirmToparlaFlow}>Toparlanmış halini oluştur</button>
+          <button type="button" className="sestia-text-link" onClick={dismissToparlaFlow}>Vazgeç</button>
+        </div>
+      </div>
+    )}
+    {toparlaFlow?.status === 'generating' && (
+      <div className="thinking">
+        <div className="spinner" />
+        <p className="muted">Odanı toparlanmış haliyle görüyoruz…</p>
+      </div>
+    )}
+    {toparlaFlow?.status === 'error' && (
+      <div className="card">
+        <div className="errbox">{toparlaFlow.error}</div>
+        <button type="button" className="btn-primary" onClick={retryToparlaFlow}>Tekrar dene</button>
+      </div>
+    )}
+    {toparlaFlow?.status === 'done' && (
+      <BeforeAfterSlider
+        beforeSrc={`/api/chat/attachments/${toparlaFlow.attachmentId}`}
+        afterSrc={`/api/chat/toparla/${toparlaFlow.result.id}`}
+        width={toparlaFlow.result.outputWidth}
+        height={toparlaFlow.result.outputHeight}
+      />
     )}
     {busy && <p role="status" className="muted">Sestia yanıtlıyor…</p>}
     {error && <div role="alert" className="errbox">{error}</div>}
@@ -207,13 +361,13 @@ export function ConversationPanel({ productContext, entryLabel, active = true, e
       </div>
       <button className="btn-primary" disabled={!chatComposerClient.canSend({ text: draft, file: attachedFile, busy, messageCount: messages.length })}><SendIcon /> Gönder</button>
     </form>
-    {messages.length > 0 && <button className="sestia-text-link" disabled={busy} onClick={() => { if (window.confirm('Bu sohbeti kapatıp yenisini başlatmak ister misin?')) { setMessages([]); setDraft(''); setError(null); setSuggestedAction(null); removeAttachment(); } }}>Yeni sohbet</button>}
+    {messages.length > 0 && <button className="sestia-text-link" disabled={busy} onClick={() => { if (window.confirm('Bu sohbeti kapatıp yenisini başlatmak ister misin?')) { setMessages([]); setDraft(''); setError(null); setSuggestedAction(null); removeAttachment(); toparlaRequestRef.current = null; setToparlaFlow(null); } }}>Yeni sohbet</button>}
   </div>;
 }
 
 // Remains mounted across main navigation; no fictional replies or client-side API keys.
-export function SestiaChat({ active, context, onBack }) {
+export function SestiaChat({ active, context, onBack, identityType, onRequireAccount }) {
   return <section className="view sestia-chat-view" hidden={!active}><div className="scroll"><Header onBack={onBack} /><PageHeading title="Sestia">Birlikte bakalım.</PageHeading>
-    <ConversationPanel active={active} productContext={{ kind: 'general' }} entryLabel={context} />
+    <ConversationPanel active={active} productContext={{ kind: 'general' }} entryLabel={context} identityType={identityType} onRequireAccount={onRequireAccount} />
   </div></section>;
 }

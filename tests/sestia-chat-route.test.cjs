@@ -207,6 +207,59 @@ test('capability truth: attach_photo is allowed through when the model suggests 
   assert.equal(res.body.suggestedAction, 'attach_photo');
 });
 
+test('exact-image targeting: the model can select attachment B while A remains in history, and A is never substituted', async t => {
+  const f = fixture(t);
+  const attachmentA = f.api.chatAttachments.create('owner', 'inspiration.jpg', 'image/jpeg'); // shared first (inspiration)
+  const attachmentB = f.api.chatAttachments.create('owner', 'salon.jpg', 'image/jpeg'); // shared second (user's own room)
+  fs.mkdirSync(path.join(f.directory, 'data', 'chat-attachments'), { recursive: true });
+  fs.writeFileSync(path.join(f.directory, 'data', 'chat-attachments', 'inspiration.jpg'), Buffer.from('A'));
+  fs.writeFileSync(path.join(f.directory, 'data', 'chat-attachments', 'salon.jpg'), Buffer.from('B'));
+
+  const { post } = postChatRoute(f, {
+    chatFreelyImpl: async () => ({ reply: 'Belki sadece neyin görünür kalacağına karar vermek.', suggestedAction: { type: 'view_tidied_room', attachmentId: attachmentB.id } }),
+  });
+  const res = await post({
+    messages: [
+      { role: 'user', content: 'ilham', image: { source: 'chat_attachment', id: attachmentA.id } },
+      { role: 'assistant', content: 'Güzel bir köşe.' },
+      { role: 'user', content: '', image: { source: 'chat_attachment', id: attachmentB.id } },
+    ],
+    context: null,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.suggestedAction.type, 'view_tidied_room');
+  assert.equal(res.body.suggestedAction.attachmentId, attachmentB.id, 'targets the exact attachment the model named, not "the latest" by coincidence-matching logic');
+  assert.notEqual(res.body.suggestedAction.attachmentId, attachmentA.id, 'A is never substituted for B');
+});
+
+test('exact-image targeting: an attachment id the model invents (never occurred in this conversation) is stripped, not substituted', async t => {
+  const f = fixture(t);
+  const attachmentA = f.api.chatAttachments.create('owner', 'a.jpg', 'image/jpeg');
+  fs.mkdirSync(path.join(f.directory, 'data', 'chat-attachments'), { recursive: true });
+  fs.writeFileSync(path.join(f.directory, 'data', 'chat-attachments', 'a.jpg'), Buffer.from('A'));
+  const foreignId = attachmentA.id + 999;
+
+  const { post } = postChatRoute(f, {
+    chatFreelyImpl: async () => ({ reply: 'Tamam.', suggestedAction: { type: 'view_tidied_room', attachmentId: foreignId } }),
+  });
+  const res = await post({
+    messages: [{ role: 'user', content: '', image: { source: 'chat_attachment', id: attachmentA.id } }],
+    context: null,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.suggestedAction, null, 'an id that never occurred in this conversation must never reach the client');
+});
+
+test('exact-image targeting: view_tidied_room is stripped entirely when the conversation has no attached image at all', async t => {
+  const f = fixture(t);
+  const { post } = postChatRoute(f, {
+    chatFreelyImpl: async () => ({ reply: 'Tamam.', suggestedAction: { type: 'view_tidied_room', attachmentId: 1 } }),
+  });
+  const res = await post({ messages: [{ role: 'user', content: 'merhaba, hiç fotoğraf paylaşmadım' }], context: null });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.suggestedAction, null);
+});
+
 test('using a toparla_result as chat context never triggers a new Toparla generation', async t => {
   const f = fixture(t);
   const claim = f.api.toparla.claimGeneration('owner', f.roomId, f.photoId, 'op-no-side-effect', { model: 'gpt-image-2.5-sunburst', quality: 'medium' });

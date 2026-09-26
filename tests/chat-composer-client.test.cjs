@@ -36,3 +36,10 @@ test('isRenderableAction: only the known V1 action renders, no arbitrary strings
   assert.equal(chatComposerClient.isRenderableAction(null), false);
   assert.equal(chatComposerClient.isRenderableAction(undefined), false);
 });
+
+test('isRenderableAction: view_tidied_room only renders with a real integer attachmentId', () => {
+  assert.equal(chatComposerClient.isRenderableAction({ type: 'view_tidied_room', attachmentId: 7 }), true);
+  assert.equal(chatComposerClient.isRenderableAction({ type: 'view_tidied_room' }), false, 'missing target -> never renders');
+  assert.equal(chatComposerClient.isRenderableAction({ type: 'view_tidied_room', attachmentId: 'seven' }), false);
+  assert.equal(chatComposerClient.isRenderableAction({ type: 'invented_type', attachmentId: 7 }), false);
+});

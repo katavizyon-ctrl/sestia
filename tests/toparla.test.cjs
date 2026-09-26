@@ -64,11 +64,12 @@ function route(file, deps) {
   return ctx.__h;
 }
 
-function postRoute(f, owner = 'owner') {
+function postRoute(f, owner = 'owner', identityType = 'account') {
   const { POST } = route('app/api/rooms/[id]/toparla/route.js', {
     fs: require('fs/promises'), path, crypto: require('crypto'),
     process: { cwd: () => f.directory },
-    getIdentity: async () => (owner ? { id: owner } : null),
+    getIdentity: async () => (owner ? { id: owner, type: identityType } : null),
+    isAccountIdentity: (identity) => identity?.type === 'account',
     toparla: f.api.toparla,
     openaiImage,
   });
@@ -91,6 +92,18 @@ function withMockedGeneration(impl, fn) {
   openaiImage.generateTidyImage = async (...args) => { calls += 1; return impl(...args); };
   return Promise.resolve(fn(() => calls)).finally(() => { openaiImage.generateTidyImage = original; });
 }
+
+test('account gate: a guest identity is rejected before any claim or paid call, even for a room/photo it legitimately owns', async t => {
+  const f = fixture(t);
+  const guestPost = postRoute(f, 'owner', 'guest');
+  await withMockedGeneration(async () => ({ bytes: Buffer.from('png'), latencyMs: 1, usage: null }), async (calls) => {
+    const res = await guestPost(f.roomId, { photoId: f.photoId, operationKey: 'op-guest-000001' });
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error, 'account_required');
+    assert.equal(calls(), 0, 'a guest must never reach the paid generation call');
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM toparla_results').get().n, 0, 'no claim/row is created for a rejected guest request');
+  });
+});
 
 test('ownership: cannot generate for a room or photo you do not own', async t => {
   const f = fixture(t), post = postRoute(f);

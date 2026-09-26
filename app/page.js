@@ -5,7 +5,7 @@ import { compressImage, getLastRoom, setLastRoom, getUserName, setUserName } fro
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES, ASSISTANT_NAME } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
-import { Brand, Header, PageHeading, MainNavigation, HomeDashboard, DiscoverView, ChooseView, SestiaChat, ConversationPanel, RoomCover } from '@/components/SestiaExperience';
+import { Brand, Header, PageHeading, MainNavigation, HomeDashboard, DiscoverView, ChooseView, SestiaChat, ConversationPanel, BeforeAfterSlider, RoomCover } from '@/components/SestiaExperience';
 import roomItemSources from '@/lib/roomItemSources.cjs';
 import roomScanClient from '@/lib/roomScanClient.cjs';
 import {
@@ -807,6 +807,18 @@ export default function Page() {
     setView('room-review');
   }
 
+  // Paylaşılan account-gate çıkışı: hem Room Detail Toparla'nın hem
+  // ConversationPanel'in "E-posta ile devam et" aksiyonu buraya çıkar.
+  // Mevcut, tek email/hesap akışını (WelcomeView + accountEmailFlow) yeniden
+  // kullanır — ikinci bir giriş/kayıt uygulaması icat edilmez. Kod
+  // doğrulaması tamamlandığında zaten sert bir sayfa yenilemesiyle biter
+  // (bkz. WelcomeView.submitCode) — bu yüzden burada Toparla akışının
+  // durumunu "kurtarmaya" çalışmıyoruz; bu, kabul edilmiş bir V1 sınırı.
+  function requireAccountFlow() {
+    goTo('account');
+    setAccountEmailFlow(true);
+  }
+
   // "Odaya birlikte bakalım"dan ayrı, tamamen bağımsız bir akış: mevcut
   // fotoğraflardan biri, aynı oda toparlanmış haliyle görselleştirilir.
   // Fotoğraf yoksa yeni bir yükleme ekranı icat etmek yerine mevcut
@@ -820,10 +832,20 @@ export default function Page() {
     toparlaOperationRef.current = null;
     setToparlaResult(null);
     setToparlaError(null);
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    // Toparla is account-only regardless of entry point (server-enforced in
+    // both /api/rooms/[id]/toparla and /api/chat/toparla — this is UX only).
+    // A guest still sees the real capability and reaches an account gate
+    // instead of source selection; no photo is chosen, no operation key is
+    // minted, nothing paid is even reachable from this state.
+    if (identityType !== 'account') {
+      setToparlaStatus('account-gate');
+      setView('toparla');
+      return;
+    }
     const single = roomDetail.photos.length === 1;
     setToparlaPhotoId(single ? roomDetail.photos[0].id : null);
     setToparlaStatus(single ? 'confirm' : 'select');
-    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
     // setView directly, not goTo: goTo unconditionally clears
     // toparlaRequestRef (by design, so leaving the flow invalidates it) —
     // going through it here would erase the request we just armed above.
@@ -1416,7 +1438,7 @@ export default function Page() {
       ) : <HomeDashboard userName={displayName} rooms={rooms} roomsLoading={roomsLoading} roomsError={roomsError} homeState={homeState} homeMessage={homeMessage} onOpenRoom={openRoom} onNavigate={goTo} onChat={openSestiaChat} onAccount={()=>goTo('account')} error={homeError}/>)}
       {view === 'discover' && <DiscoverView library={sestiaLibrary} onChat={openSestiaChat} onNavigate={goTo} onAccount={()=>goTo('account')}/>}
       {view === 'choose' && <ChooseView onBack={()=>goTo('home')} onSingle={()=>selectMode('tek_esya')} onRoom={()=>selectMode('oda_tarama')}/>}
-      {!showWelcome && <SestiaChat key={currentIdentityId} active={view==='chat'} context={chatContext} onBack={()=>goTo('home')}/>}
+      {!showWelcome && <SestiaChat key={currentIdentityId} active={view==='chat'} context={chatContext} onBack={()=>goTo('home')} identityType={identityType} onRequireAccount={requireAccountFlow}/>}
       {view === 'account' && (
         identityType === 'account' ? <section className="view"><div className="scroll"><Header onBack={()=>goTo('home')}/><PageHeading title="Hesabın">{displayName ? `Merhaba, ${displayName}.` : 'Hesabınla devam ediyorsun.'}</PageHeading><div className="card"><h2>Birlikte baktıklarımız burada.</h2><p className="muted">Odalarına, fotoğraflarına ve kararlarına hesabınla erişebilirsin.</p></div><button className="btn-primary" onClick={()=>goTo('rooms')}>Odalarıma dön</button></div></section> : accountEmailFlow ? <WelcomeView
           onGuestStart={() => {setUserNameState(getUserName(currentIdentityId));setAccountEmailFlow(false);}}
@@ -1476,6 +1498,7 @@ export default function Page() {
           onChangePhoto={() => setToparlaStatus('select')}
           onConfirm={submitToparla}
           onRetry={retryToparla}
+          onRequireAccount={requireAccountFlow}
         />
       )}
 
@@ -2002,7 +2025,7 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
 // "Toparlanmış halini gör" — Odaya birlikte bakalım'dan tamamen ayrı, kendi
 // içinde kapalı bir akış: fotoğraf seçimi (birden fazlaysa) → onay →
 // üretim → Önce/Sonra. Tek fotoğrafta seçim ekranı hiç gösterilmez.
-function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPhoto, onChangePhoto, onConfirm, onRetry }) {
+function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPhoto, onChangePhoto, onConfirm, onRetry, onRequireAccount }) {
   if (!room) return <section className="view"><div className="scroll"><Header onBack={onBack} /><div className="thinking"><div className="spinner" /></div></div></section>;
 
   const photoUrl = (id) => `/api/rooms/${room.id}/photos/${id}`;
@@ -2015,6 +2038,16 @@ function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPho
           <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Toparlanmış halini gör</h2>
         </div>
+
+        {status === 'account-gate' && (
+          <>
+            <PageHeading title="Bunu senin için oluşturabilmem için giriş yapman gerekiyor." center />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button className="btn-primary" onClick={onRequireAccount}>E-posta ile devam et <ChevronRightIcon /></button>
+              <button className="btn-outline" onClick={onBack}>Şimdilik değil</button>
+            </div>
+          </>
+        )}
 
         {status === 'select' && (
           <>
@@ -2076,35 +2109,13 @@ function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPho
               emptyStateHeading="Ne düşünüyorsun?"
               emptyStateCopy="Masadaki kutular, köşedeki sandalye, ışık — aklına ne geliyorsa yazabilirsin."
               className="sestia-embedded-chat"
+              identityType="account"
+              onRequireAccount={onRequireAccount}
             />
           </>
         )}
       </div>
     </section>
-  );
-}
-
-// Bağımlılıksız, dokunmatik-uyumlu Önce/Sonra kıyaslaması: native bir range
-// input tam kaplayan, görünmez bir sürükleme yüzeyi olarak kullanılır —
-// klavye ve dokunma erişilebilirliği bedava gelir.
-function BeforeAfterSlider({ beforeSrc, afterSrc, width, height }) {
-  const [value, setValue] = useState(50);
-  const ratio = width && height ? `${width} / ${height}` : '3 / 4';
-  return (
-    <div className="sestia-baf" style={{ aspectRatio: ratio }}>
-      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" />
-      <div className="sestia-baf-after-wrap" style={{ clipPath: `inset(0 ${100 - value}% 0 0)` }}>
-        <img className="sestia-baf-img" src={afterSrc} alt="Sonra" />
-      </div>
-      <div className="sestia-baf-line" style={{ left: `${value}%` }} aria-hidden="true" />
-      <input
-        type="range" min="0" max="100" value={value}
-        onChange={(e) => setValue(Number(e.target.value))}
-        className="sestia-baf-range" aria-label="Önce ve sonra karşılaştırma kaydırıcısı"
-      />
-      <span className="sestia-baf-label sestia-baf-label-before" aria-hidden="true">Önce</span>
-      <span className="sestia-baf-label sestia-baf-label-after" aria-hidden="true">Sonra</span>
-    </div>
   );
 }
 

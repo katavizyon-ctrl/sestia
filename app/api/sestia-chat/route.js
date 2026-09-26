@@ -60,12 +60,31 @@ export async function POST(req) {
       resolvedMessages.push({ ...message, resolvedImage: { base64: bytes.toString('base64'), mediaType: attachment.mimeType } });
     }
 
-    const capabilities = chatCapabilities.getCapabilities();
+    // Toparla's relevance signal: purely "does this conversation have an
+    // owned image to work with" — independent of account status. A guest
+    // may still be told this is relevant; only the generation endpoint
+    // itself (app/api/chat/toparla) enforces the account requirement.
+    const attachedIds = new Set(
+      resolvedMessages.filter((m) => m.role === 'user' && m.image?.source === 'chat_attachment').map((m) => m.image.id)
+    );
+    const capabilities = chatCapabilities.getCapabilities({ hasAttachableImage: attachedIds.size > 0 });
     const result = await chatFreely(resolvedMessages, resolvedContext, capabilities);
-    // The model is never the source of truth for what it may suggest — even
-    // though chatFreely already constrains the schema it's asked for, the
-    // returned action is re-validated here before it can ever reach the client.
-    const suggestedAction = chatCapabilities.isSuggestedActionValid(result.suggestedAction, capabilities) ? result.suggestedAction : null;
+    // The model is never the source of truth for what it may suggest. Two
+    // independent checks, both required: (1) the action/shape is currently
+    // relevant at all (chatCapabilities), and (2) for view_tidied_room
+    // specifically, the exact attachment it names actually occurred in this
+    // validated conversation and was successfully resolved (owned) above —
+    // never substituted for "the latest image" or invented outright.
+    let suggestedAction = null;
+    if (result.suggestedAction && chatCapabilities.isSuggestedActionValid(result.suggestedAction, capabilities)) {
+      if (result.suggestedAction === 'attach_photo') {
+        suggestedAction = 'attach_photo';
+      } else if (attachedIds.has(result.suggestedAction.attachmentId)) {
+        suggestedAction = result.suggestedAction;
+      }
+      // else: names a real-shaped action but an attachment id that never
+      // occurred in this conversation — stripped, never silently substituted.
+    }
 
     // The client resends this array on the next turn: original messages
     // (with their reference-only image fields, never resolved bytes) plus

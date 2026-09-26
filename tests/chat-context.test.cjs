@@ -80,6 +80,17 @@ test('resolveContext: toparla_result rejects a result that is not yet completed 
   assert.deepEqual(res, { ok: false, error: 'result_not_found' });
 });
 
+test('resolveContext: a room-less (chat_attachment-originated) completed result resolves without a false room_not_found', () => {
+  const deps = fakeDeps({
+    results: { 9: { id: 9, roomId: null, sourcePhotoId: null, chatAttachmentId: 3, status: 'completed', deviceId: 'owner' } },
+  });
+  const res = chatContext.resolveContext({ kind: 'toparla_result', toparlaResultId: 9 }, 'owner', deps);
+  assert.equal(res.ok, true);
+  assert.equal(res.resolved.roomId, null);
+  assert.equal(res.resolved.chatAttachmentId, 3);
+  assert.equal(res.resolved.roomName, null);
+});
+
 test('resolveContext: an unknown result id is rejected, not silently treated as general', () => {
   const deps = fakeDeps();
   const res = chatContext.resolveContext({ kind: 'toparla_result', toparlaResultId: 999 }, 'owner', deps);
@@ -98,4 +109,10 @@ test('buildContextSystemText: general adds nothing, room/toparla_result carry th
   const text = chatContext.buildContextSystemText({ kind: 'toparla_result', roomName: 'Salon' });
   assert.match(text, /Salon/);
   assert.match(text, /görselleştirme/, 'must say this is a visualization, not a placement record');
+});
+
+test('buildContextSystemText: a room-less toparla_result still carries the visualization framing, without inventing a room name', () => {
+  const text = chatContext.buildContextSystemText({ kind: 'toparla_result', roomName: null });
+  assert.doesNotMatch(text, /"null"|undefined/);
+  assert.match(text, /görselleştirme/);
 });

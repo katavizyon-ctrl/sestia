@@ -23,3 +23,19 @@ test('isSuggestedActionValid: null is always fine; only a currently-true capabil
 test('isSuggestedActionValid: a capability that is false rejects its own key', () => {
   assert.equal(chatCapabilities.isSuggestedActionValid('attach_photo', { attach_photo: false }), false);
 });
+
+test('getCapabilities: view_tidied_room separates relevance from account authorization', () => {
+  assert.deepEqual(chatCapabilities.getCapabilities(), { attach_photo: true, view_tidied_room: { relevant: false, requiresAccount: true } });
+  assert.deepEqual(chatCapabilities.getCapabilities({ hasAttachableImage: true }).view_tidied_room, { relevant: true, requiresAccount: true });
+  assert.equal(chatCapabilities.getCapabilities({ hasAttachableImage: false }).view_tidied_room.relevant, false);
+});
+
+test('isSuggestedActionValid: view_tidied_room requires relevance AND a real integer attachment id, never account status', () => {
+  const relevant = chatCapabilities.getCapabilities({ hasAttachableImage: true });
+  const notRelevant = chatCapabilities.getCapabilities({ hasAttachableImage: false });
+  assert.equal(chatCapabilities.isSuggestedActionValid({ type: 'view_tidied_room', attachmentId: 7 }, relevant), true);
+  assert.equal(chatCapabilities.isSuggestedActionValid({ type: 'view_tidied_room', attachmentId: 7 }, notRelevant), false, 'no usable image -> never valid, regardless of shape');
+  assert.equal(chatCapabilities.isSuggestedActionValid({ type: 'view_tidied_room' }, relevant), false, 'missing attachmentId is invalid');
+  assert.equal(chatCapabilities.isSuggestedActionValid({ type: 'view_tidied_room', attachmentId: 'seven' }, relevant), false, 'non-integer id is invalid');
+  assert.equal(chatCapabilities.isSuggestedActionValid({ type: 'invented_action', attachmentId: 7 }, relevant), false, 'unknown action type is always invalid');
+});

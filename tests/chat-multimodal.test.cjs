@@ -127,6 +127,53 @@ test('max_tokens stop reason is treated as an invalid reply, not silently trunca
   await assert.rejects(() => mod.chatFreely([{ role: 'user', content: 'Merhaba' }], GENERAL, CAPS), /invalid_chat_reply/);
 });
 
+const CAPS_WITH_TIDY = { attach_photo: true, view_tidied_room: { relevant: true, requiresAccount: true } };
+
+test('exact-image targeting: each attached image is tagged with its own reference id the model must cite back', async () => {
+  const { mod, setCreateImpl } = loadAnthropicModule();
+  let captured;
+  setCreateImpl(async (req) => { captured = req; return fakeReply('Anladım.', { type: 'view_tidied_room', attachmentId: 42 }); });
+  const result = await mod.chatFreely(
+    [
+      { role: 'user', content: 'ilham için', image: { source: 'chat_attachment', id: 11 }, resolvedImage: { base64: 'AAA', mediaType: 'image/jpeg' } },
+      { role: 'assistant', content: 'Güzel bir köşe.' },
+      { role: 'user', content: '', image: { source: 'chat_attachment', id: 42 }, resolvedImage: { base64: 'BBB', mediaType: 'image/jpeg' } },
+    ],
+    GENERAL, CAPS_WITH_TIDY
+  );
+  const firstBlocks = captured.messages[0].content;
+  const lastBlocks = captured.messages[2].content;
+  assert.equal(firstBlocks[0].type, 'text');
+  assert.equal(firstBlocks[0].text, '[Fotoğraf referansı: 11]');
+  assert.equal(lastBlocks[0].text, '[Fotoğraf referansı: 42]');
+  // The model is told which reference tags exist; it is not told to just
+  // pick the newest one.
+  assert.match(captured.system, /GERÇEKTEN kastettiğini/);
+  assert.equal(result.suggestedAction.type, 'view_tidied_room');
+  assert.equal(result.suggestedAction.attachmentId, 42);
+});
+
+test('view_tidied_room is only offered in the schema when the capability says it is relevant', async () => {
+  const { mod, setCreateImpl } = loadAnthropicModule();
+  let captured;
+  setCreateImpl(async (req) => { captured = req; return fakeReply('Tamam.', null); });
+  await mod.chatFreely([{ role: 'user', content: 'hi' }], GENERAL, { attach_photo: true, view_tidied_room: { relevant: false, requiresAccount: true } });
+  assert.doesNotMatch(captured.system, /view_tidied_room/);
+
+  const { mod: mod2, setCreateImpl: setImpl2 } = loadAnthropicModule();
+  let captured2;
+  setImpl2(async (req) => { captured2 = req; return fakeReply('Tamam.', null); });
+  await mod2.chatFreely([{ role: 'user', content: 'hi' }], GENERAL, CAPS_WITH_TIDY);
+  assert.match(captured2.system, /view_tidied_room/);
+});
+
+test('a view_tidied_room suggestion with a non-integer or missing attachmentId is normalized to null', async () => {
+  const { mod, setCreateImpl } = loadAnthropicModule();
+  setCreateImpl(async () => ({ content: [{ type: 'text', text: JSON.stringify({ reply: 'Tamam.', suggestedAction: { type: 'view_tidied_room', attachmentId: 'not-a-number' } }) }], stop_reason: 'end_turn' }));
+  const result = await mod.chatFreely([{ role: 'user', content: 'hi' }], GENERAL, CAPS_WITH_TIDY);
+  assert.equal(result.suggestedAction, null);
+});
+
 test('validChatMessages: text-only history unchanged from before, image ref shape enforced', () => {
   const { mod } = loadAnthropicModule();
   assert.equal(mod.validChatMessages([{ role: 'user', content: 'Merhaba' }]), true);
