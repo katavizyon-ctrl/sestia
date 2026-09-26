@@ -22,7 +22,12 @@ window.fetch = (url, options = {}) => {
   unexpected.push(`${options.method || 'GET'} ${url}`);
   return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'fixture' }) });
 };
-const guest = id => ({ identityType: 'guest', identityId: id, name: null, emailReady: true, streak: 0, points: 0, totalDecisions: 0 });
+// work: the /api/state fields the approved landing rule reads (lib/db.js hasStartedRealWork).
+const NO_WORK = { totalDecisions: 0, hasStartedWork: false };
+const guest = (id, work = NO_WORK) => ({ identityType: 'guest', identityId: id, name: null, emailReady: true, streak: 0, points: 0, ...work });
+const account = (id, name, work = NO_WORK) => ({ identityType: 'account', identityId: id, name, emailReady: true, streak: 0, points: 0, ...work });
+const ROOM_WORK = { totalDecisions: 0, hasStartedWork: true };
+const DECISION_WORK = { totalDecisions: 2, hasStartedWork: true };
 
 function check(condition, message) { if (!condition) throw new Error(message); }
 const $root = () => document.getElementById('root');
@@ -79,6 +84,22 @@ async function methodScreen() {
   const card = document.getElementById('signup-email')?.closest('form');
   check(card && card.querySelectorAll('input').length === 1, 'email card has exactly one input');
 }
+// Landing must be the settled screen, not a flash before a later redirect.
+async function landsOn(expected, description) {
+  await until(() => screen() === expected, description);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  check(screen() === expected, `${description}: moved on to ${screen()}`);
+}
+async function navTo(label) {
+  const tab = [...$root().querySelectorAll('nav.sestia-nav button')].find(b => b.textContent.trim() === label);
+  check(tab, `bottom navigation has ${label}`);
+  tab.click();
+}
+// Keşif keeps its own copy: no greeting is added there.
+function discoverUnchanged() {
+  check(heading() === 'Birlikte bakalım.', `Keşif heading: ${heading()}`);
+  check(!$root().textContent.includes('Merhaba'), 'no greeting on Keşif');
+}
 async function sendEmail(address) {
   type(document.getElementById('signup-email'), address);
   await until(() => !button('Giriş kodu gönder').disabled, 'send enabled with only an email');
@@ -95,10 +116,16 @@ const cases = {
     check($root().textContent.includes('Memnun oldum, Ayşe.'), 'method stage greets by name');
     check(button('Giriş kodu gönder'), 'email option still offered');
     button('Misafir olarak devam et').click();
-    await until(() => screen() === 'discover', 'app after guest start');
+    await landsOn('discover', '1. new named guest, no work -> Keşif');
+    discoverUnchanged();
     await open(guest('11111111-1111-4111-8111-111111111111'));
-    await until(() => screen() === 'home', 'refresh goes straight to the app');
+    await landsOn('discover', '5/9. returning guest / refresh, no work -> Keşif');
+    await navTo('Ana sayfa');
+    await landsOn('home', '11. no-work user taps Ana sayfa and stays there');
     check(heading() === 'Merhaba, Ayşe.', `name kept after refresh: ${heading()}`);
+    await navTo('Keşif');
+    await landsOn('discover', '12. Keşif tab works normally');
+    discoverUnchanged();
   },
   async 'Welcome -> Misafir olarak devam et -> isim verme -> uygulama; refresh keeps identity'() {
     localStorage.clear();
@@ -106,12 +133,34 @@ const cases = {
     await anonymousToMethod();
     noBrokenName();
     button('Misafir olarak devam et').click();
-    await until(() => screen() === 'discover', 'app after anonymous guest start');
+    await landsOn('discover', '2. new anonymous guest, no work -> Keşif');
+    discoverUnchanged();
     noBrokenName();
     await open(guest('22222222-2222-4222-8222-222222222222'));
-    await until(() => screen() === 'home', 'refresh goes straight to the app');
+    await landsOn('discover', '5/9. returning anonymous guest / refresh, no work -> Keşif');
+    await navTo('Ana sayfa');
+    await landsOn('home', '11. anonymous no-work user can open Ana sayfa');
     check(heading() === 'Merhaba.', `neutral greeting: ${heading()}`);
     noBrokenName();
+  },
+  async '7/10. guest with real work (a room, or decisions) -> Ana Sayfa, also after refresh'() {
+    for (const [id, work] of [['66666666-6666-4666-8666-666666666666', ROOM_WORK], ['77777777-7777-4777-8777-777777777777', DECISION_WORK]]) {
+      localStorage.clear();
+      localStorage.setItem('sestia_guest_id_confirmed', id);
+      localStorage.setItem('sestia_intro_skipped', id);
+      await open(guest(id, work));
+      await landsOn('home', `returning guest with work ${JSON.stringify(work)}`);
+      check(heading() === 'Merhaba.', `home greeting: ${heading()}`);
+      await open(guest(id, work));
+      await landsOn('home', 'refresh with work -> Ana Sayfa');
+    }
+  },
+  async 'guest who finishes onboarding on an identity that already has work -> Ana Sayfa'() {
+    localStorage.clear();
+    await open(guest('88888888-8888-4888-8888-888888888888', ROOM_WORK));
+    await anonymousToMethod();
+    button('Misafir olarak devam et').click();
+    await landsOn('home', 'onboarding completion follows the same rule');
   },
   async 'Hitap Ayşe -> E-posta ile devam et -> yalnız e-posta -> kod ekranı; Ayşe hesaba taşınır'() {
     localStorage.clear();
@@ -138,17 +187,34 @@ const cases = {
     await welcomeToGuestMethod();
     check(document.getElementById('preferred-name').value === '', 'no inherited name');
   },
-  async 'existing account is never sent to onboarding'() {
+  // A new account and a returning account arrive the same way: the code
+  // sign-in reloads the page and /api/state reports the account.
+  async '3/6. named account (new or returning), no work -> Keşif; never onboarding'() {
     localStorage.clear();
-    await open({ identityType: 'account', identityId: 'account-1', name: 'Hesap', emailReady: true, streak: 0, points: 0, totalDecisions: 0 });
-    await until(() => screen() === 'home', 'account home');
+    await open(account('account-1', 'Hesap'));
+    await landsOn('discover', 'named account without work -> Keşif');
+    discoverUnchanged();
+    await navTo('Ana sayfa');
+    await landsOn('home', 'account can open Ana sayfa');
     check(heading() === 'Merhaba, Hesap.', `account name: ${heading()}`);
   },
-  async 'account without a name gets the neutral greeting'() {
-    await open({ identityType: 'account', identityId: 'account-2', name: null, emailReady: true, streak: 0, points: 0, totalDecisions: 0 });
-    await until(() => screen() === 'home', 'account home');
+  async '4/6. anonymous account (new or returning), no work -> Keşif; neutral greeting on Ana Sayfa'() {
+    await open(account('account-2', null));
+    await landsOn('discover', 'anonymous account without work -> Keşif');
+    noBrokenName();
+    await navTo('Ana sayfa');
+    await landsOn('home', 'account can open Ana sayfa');
     check(heading() === 'Merhaba.', `neutral: ${heading()}`);
     noBrokenName();
+  },
+  async '8/10. account with real work -> Ana Sayfa, also after refresh'() {
+    for (const work of [ROOM_WORK, DECISION_WORK]) {
+      await open(account('account-3', 'Hesap', work));
+      await landsOn('home', `account with work ${JSON.stringify(work)}`);
+      check(heading() === 'Merhaba, Hesap.', `account name: ${heading()}`);
+      await open(account('account-3', 'Hesap', work));
+      await landsOn('home', 'refresh with work -> Ana Sayfa');
+    }
   },
 };
 

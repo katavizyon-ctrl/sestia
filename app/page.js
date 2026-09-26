@@ -39,6 +39,15 @@ function formatAnalysisDate(sqliteUtc) {
   }
 }
 
+// Onaylı ürün kuralı (docs/SESTIA_PROJE_BRIEFING.md): gerçek çalışması
+// olmayan kullanıcı Keşif'te, olan Ana Sayfa'da başlar; misafir ya da hesap
+// olması fark etmez. "Gerçek çalışma" = en az bir karar veya bir oda
+// (lib/db.js hasStartedRealWork). Yalnızca açılışta ve tanışma bitince
+// uygulanır; sekmeler arasında geçişi hiçbir zaman yönlendirmez.
+function landingView(state) {
+  return state?.totalDecisions > 0 || state?.hasStartedWork ? 'home' : 'discover';
+}
+
 export default function Page() {
   const [view, setView] = useState('home');
   const [chatContext, setChatContext] = useState(null);
@@ -238,6 +247,7 @@ export default function Page() {
         const hasName = data.identityType === 'guest' && (Boolean(getUserName(data.identityId)) || skippedName);
         const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId && hasName;
         if (data.identityType !== 'account' && !isKnownGuest) setShowWelcome(true);
+        else setView(landingView(data));
       }
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
@@ -1297,7 +1307,7 @@ export default function Page() {
   return (
     <div className={`app${mainSurface && !showWelcome ? ' sestia-with-nav' : ''}`} data-screen={showWelcome ? 'welcome' : view}>
       {view === 'home' && (showWelcome ? (
-        <WelcomeView onGuestStart={() => {setShowWelcome(false);setUserNameState(getUserName(currentIdentityId));goTo('discover');}} currentIdentityId={currentIdentityId} emailReady={homeState.emailReady} />
+        <WelcomeView onGuestStart={() => {setShowWelcome(false);setUserNameState(getUserName(currentIdentityId));goTo(landingView(homeState));}} currentIdentityId={currentIdentityId} emailReady={homeState.emailReady} />
       ) : <HomeDashboard userName={displayName} rooms={rooms} roomsLoading={roomsLoading} roomsError={roomsError} homeState={homeState} homeMessage={homeMessage} onOpenRoom={openRoom} onNavigate={goTo} onChat={openSestiaChat} onAccount={()=>goTo('account')} error={homeError}/>)}
       {view === 'discover' && <DiscoverView library={sestiaLibrary} onChat={openSestiaChat} onNavigate={goTo} onAccount={()=>goTo('account')}/>}
       {view === 'choose' && <ChooseView onBack={()=>goTo('home')} onSingle={()=>selectMode('tek_esya')} onRoom={()=>selectMode('oda_tarama')}/>}

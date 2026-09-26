@@ -9,7 +9,8 @@ const idle = query.get('idle') === '1';
 const pending = [];
 let session = 1;
 let recoveryReads = 0;
-const state = { identityType: 'account', identityId: 'synthetic-browser-owner', name: 'Test', streak: 0, points: 0, totalDecisions: 0 };
+// hasStartedWork matches the server: this owner has a room (lib/db.js hasStartedRealWork).
+const state = { identityType: 'account', identityId: 'synthetic-browser-owner', name: 'Test', streak: 0, points: 0, totalDecisions: 0, hasStartedWork: true };
 const item = { id: 'item-1', label: 'Fixture Chair', category: 'Mobilya', recommendation: 'sat', manual: true, excluded: false,
   reasoning: 'Fixture', modelSuggestion: { recommendation: 'sat', reasoning: 'Fixture' } };
 const json = body => Promise.resolve({ ok: true, status: 200, json: async () => body });

@@ -186,6 +186,23 @@ async function check(name, fn) {
     assert.equal(account.name, null);
   });
 
+  // Landing rule source of truth (lib/db.js hasStartedRealWork via /api/state):
+  // same fields for guests and accounts; one room is real work.
+  await check('real-work signal: fresh guest/account none, a room makes it real work', async () => {
+    const w = browser();
+    await arrive(w);
+    const fresh = (await state(w)).body;
+    assert.deepEqual([fresh.identityType, fresh.hasStartedWork, fresh.totalDecisions], ['guest', false, 0]);
+    await createRoom(w, 'Boş oda');
+    assert.equal((await state(w)).body.hasStartedWork, true, 'an empty room already counts');
+    const acc = browser();
+    await arrive(acc);
+    const account = await signUpWithCode(acc, 'landing@example.test', '');
+    assert.deepEqual([account.hasStartedWork, account.totalDecisions], [false, 0]);
+    await createRoom(acc, 'Salon');
+    assert.equal((await state(acc)).body.hasStartedWork, true);
+  });
+
   // Existing room photos -> room analysis reads photo bytes back through this
   // route; it must serve the owner (guest or account) and nobody else.
   await check('existing room photo bytes: owner guest/account only, no new photo row on read', async () => {
