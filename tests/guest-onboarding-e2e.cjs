@@ -186,6 +186,39 @@ async function check(name, fn) {
     assert.equal(account.name, null);
   });
 
+  // Existing room photos -> room analysis reads photo bytes back through this
+  // route; it must serve the owner (guest or account) and nobody else.
+  await check('existing room photo bytes: owner guest/account only, no new photo row on read', async () => {
+    const upload = async (who, roomId, text) => {
+      const fd = new FormData();
+      fd.append('photo', new Blob([text], { type: 'image/jpeg' }), 'photo.jpg');
+      fd.append('operationKey', crypto.randomUUID());
+      const res = await who.request(`/api/rooms/${roomId}/photos`, { method: 'POST', body: fd });
+      assert.equal(res.status, 200, `upload ${res.status}`);
+      return (await res.json()).id;
+    };
+    const read = async (who, roomId, photoId) => {
+      const res = await who.request(`/api/rooms/${roomId}/photos/${photoId}`);
+      return { status: res.status, text: res.status === 200 ? await res.text() : null };
+    };
+    const g = browser();
+    await arrive(g);
+    const guestRoom = await createRoom(g, 'Guest Salon');
+    const guestPhoto = await upload(g, guestRoom.id, 'guest-bytes');
+    const acct = browser();
+    await arrive(acct);
+    await signUpWithCode(acct, 'photos@example.test', 'Foto');
+    const acctRoom = await createRoom(acct, 'Account Salon');
+    const acctPhoto = await upload(acct, acctRoom.id, 'account-bytes');
+    assert.deepEqual(await read(g, guestRoom.id, guestPhoto), { status: 200, text: 'guest-bytes' });
+    assert.deepEqual(await read(acct, acctRoom.id, acctPhoto), { status: 200, text: 'account-bytes' });
+    assert.equal((await read(acct, guestRoom.id, guestPhoto)).status, 404, 'account cannot read a guest photo');
+    assert.equal((await read(g, acctRoom.id, acctPhoto)).status, 404, 'guest cannot read an account photo');
+    assert.equal((await read(b, guestRoom.id, guestPhoto)).status, 404, 'another guest cannot read it');
+    const detail = await (await g.request(`/api/rooms/${guestRoom.id}`)).json();
+    assert.deepEqual(detail.photos.map((p) => p.id), [guestPhoto], 'reading bytes creates no photo row');
+  });
+
   console.log(results.join('\n'));
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => {
   child.kill();

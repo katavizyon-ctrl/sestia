@@ -129,6 +129,11 @@ export default function Page() {
   const roomInitialSnapshotRef = useRef(null);
   const [roomDraftError, setRoomDraftError] = useState(null);
   const [roomLegacyApprovalUnknown, setRoomLegacyApprovalUnknown] = useState(false);
+  // Photos already in the room: more than MAX_ROOM_PHOTOS means the user picks
+  // which ones this analysis uses ({ roomId, photos, selected: [photoId] }).
+  const [roomExistingPick, setRoomExistingPick] = useState(null);
+  const [roomExistingRetry, setRoomExistingRetry] = useState(null);
+  const roomExistingLoadRef = useRef(null);
   useEffect(() => {
     if (!roomDraftDirty) return;
     const warn = event => { event.preventDefault(); event.returnValue = ''; };
@@ -444,6 +449,7 @@ export default function Page() {
   async function startRoomScanInRoom() {
     if (!roomDetail) return;
     const room = { id: roomDetail.id, name: roomDetail.name };
+    const existing = roomDetail.photos || [];
     roomDetailRequestRef.current = null;
     resetRoomScan();
     const key = roomAnalysisSessionKeyRef.current;
@@ -453,7 +459,63 @@ export default function Page() {
       activeRoomRef.current = room;
       setRoomScanNeedsRoom(false);
       setView('room-scan');
+      // The room's photos are the scan input; only an empty room starts at
+      // the picker. Above the limit the user chooses, nothing is guessed.
+      if (existing.length > MAX_ROOM_PHOTOS) setRoomExistingPick({ roomId: room.id, photos: existing, selected: [] });
+      else if (existing.length) loadExistingRoomPhotos(existing);
     } catch (error) { if (isRoomContext(context)) setRoomDetailError(roomScanClient.errorMessage(error)); }
+  }
+
+  // Existing room photos enter the same coverage → analysis pipeline as new
+  // ones: bytes come from the ownership-checked photo route and the photoId is
+  // kept, so nothing is uploaded again. All or nothing — a photo that cannot
+  // be loaded never lets a smaller set be analyzed.
+  async function loadExistingRoomPhotos(photos) {
+    const context = roomContext();
+    const version = roomPhotoVersionRef.current;
+    if (!context.roomId || !photos.length || photos.length > MAX_ROOM_PHOTOS || roomExistingLoadRef.current ||
+        roomRequestRef.current || roomPhotosRef.current.length) return;
+    const controller = new AbortController();
+    roomExistingLoadRef.current = controller;
+    const current = () => isRoomContext(context) && version === roomPhotoVersionRef.current && roomExistingLoadRef.current === controller;
+    setRoomExistingPick(null); setRoomExistingRetry(null); setRoomError(null);
+    setRoomCoverageChecking(true);
+    try {
+      const entries = await Promise.all(photos.map(async photo => {
+        const url = '/api/rooms/' + context.roomId + '/photos/' + photo.id;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error('existing_photo_failed');
+        const blob = await res.blob();
+        const type = blob.type || res.headers.get('Content-Type') || 'image/jpeg';
+        return { id: 'room-photo-' + photo.id, photoId: photo.id, url, existing: true, file: new File([blob], 'photo.jpg', { type }) };
+      }));
+      if (!current()) return;
+      updateRoomPhotos(() => entries);
+      checkRoomPhotoCoverage(entries);
+    } catch {
+      if (!current()) return;
+      setRoomCoverageChecking(false);
+      setRoomExistingRetry(photos);
+      setRoomError('Odadaki fotoğraflar açılamadı. Tekrar deneyebilir ya da yeni fotoğraf ekleyebilirsin.');
+    } finally {
+      if (roomExistingLoadRef.current === controller) roomExistingLoadRef.current = null;
+    }
+  }
+
+  function toggleExistingRoomPhoto(photoId) {
+    setRoomExistingPick(pick => {
+      if (!pick) return pick;
+      const selected = pick.selected.includes(photoId) ? pick.selected.filter(id => id !== photoId)
+        : pick.selected.length < MAX_ROOM_PHOTOS ? [...pick.selected, photoId] : pick.selected;
+      return { ...pick, selected };
+    });
+  }
+
+  function analyzeSelectedExistingRoomPhotos() {
+    const pick = roomExistingPick;
+    if (!pick?.selected.length) return;
+    // Room order, not tap order.
+    loadExistingRoomPhotos(pick.photos.filter(p => pick.selected.includes(p.id)));
   }
 
   async function recoverRoomWrite(roomId, key, error, context = roomContext()) {
@@ -976,10 +1038,11 @@ export default function Page() {
 
   // Leaving a reserved scan that has no photos, analysis or pending work frees
   // it, so the room does not report an open scan that cannot be resumed.
+  // Photos that were already in the room are not work of this scan.
   function releaseEmptyRoomScan() {
     const lease = roomLeaseRef.current;
     if (!lease || lease.analysisId || lease.orphanToken || lease.sessionKey !== roomAnalysisSessionKeyRef.current ||
-        roomReceiptRef.current || roomPhotosRef.current.length || roomUploadsRef.current.size ||
+        roomReceiptRef.current || roomPhotosRef.current.some(p => !p.existing) || roomUploadsRef.current.size ||
         roomSaveFlowRef.current || roomWriteRef.current || roomRequestRef.current) return;
     roomScanClient.write(fetch, lease.roomId, 'DELETE', { action: 'release', sessionKey: lease.sessionKey }).catch(() => {});
   }
@@ -988,6 +1051,10 @@ export default function Page() {
     releaseEmptyRoomScan();
     roomCoverageRequestRef.current?.abort();
     roomCoverageRequestRef.current = null;
+    roomExistingLoadRef.current?.abort();
+    roomExistingLoadRef.current = null;
+    setRoomExistingPick(null);
+    setRoomExistingRetry(null);
     roomPhotoVersionRef.current += 1;
     roomUploadsRef.current = new Map();
     roomAnalysisPhotosRef.current = [];
@@ -1346,6 +1413,10 @@ export default function Page() {
           photosUploading={!roomScanNeedsRoom && roomPhotos.some((p) => !p.photoId && !p.uploadFailed)}
           photosUploadFailed={roomPhotos.some((p) => p.uploadFailed)}
           onRetryUploads={retryFailedRoomPhotos}
+          existingPick={roomExistingPick}
+          onToggleExisting={toggleExistingRoomPhoto}
+          onAnalyzeExisting={analyzeSelectedExistingRoomPhotos}
+          onRetryExisting={roomExistingRetry ? () => loadExistingRoomPhotos(roomExistingRetry) : null}
         />
       )}
 
@@ -1816,7 +1887,7 @@ function ScanView({ onBack, onFile }) {
   </div></section>;
 }
 function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, coverageChecking, coverageResult, onContinueAnyway,
-  photosSavedToRoom, photosUploading, photosUploadFailed, onRetryUploads }) {
+  photosSavedToRoom, photosUploading, photosUploadFailed, onRetryUploads, existingPick, onToggleExisting, onAnalyzeExisting, onRetryExisting }) {
   const canAddMore = photos.length < MAX_ROOM_PHOTOS;
   return (
     <section className="view">
@@ -1830,6 +1901,7 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, covera
           <div className="errbox" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {error}
             {photosUploadFailed && <button className="btn-outline" onClick={onRetryUploads}>Tekrar Dene</button>}
+            {!photosUploadFailed && onRetryExisting && <button className="btn-outline" onClick={onRetryExisting}>Tekrar Dene</button>}
           </div>
         )}
 
@@ -1861,6 +1933,37 @@ function RoomScanView({ onBack, photos, onAddFiles, onRemovePhoto, error, covera
                   ) : null}
                 </div>
               ))}
+            </div>
+          )}
+
+          {existingPick && photos.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="muted" style={{ textAlign: 'center' }}>
+                Bu odada {existingPick.photos.length} fotoğraf var. Birlikte bakmak için en fazla {MAX_ROOM_PHOTOS} tanesini seç.
+              </div>
+              <div className="photogrid">
+                {existingPick.photos.map((photo, index) => {
+                  const selected = existingPick.selected.includes(photo.id);
+                  return (
+                    <button
+                      key={photo.id}
+                      type="button"
+                      className="photothumb"
+                      aria-pressed={selected}
+                      aria-label={`${index + 1}. fotoğraf`}
+                      disabled={!selected && existingPick.selected.length >= MAX_ROOM_PHOTOS}
+                      onClick={() => onToggleExisting(photo.id)}
+                      style={{ padding: 0, border: 0, outline: selected ? '3px solid var(--teal)' : 'none', outlineOffset: -3 }}
+                    >
+                      <img src={`/api/rooms/${existingPick.roomId}/photos/${photo.id}`} alt="" />
+                      {selected && <span className="photothumb-remove" aria-hidden="true"><CheckIcon style={{ width: 12, height: 12 }} /></span>}
+                    </button>
+                  );
+                })}
+              </div>
+              <button className="btn-primary" disabled={!existingPick.selected.length} onClick={onAnalyzeExisting}>
+                Seçtiklerimle devam et ({existingPick.selected.length}/{MAX_ROOM_PHOTOS})
+              </button>
             </div>
           )}
 

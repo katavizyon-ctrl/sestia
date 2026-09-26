@@ -21,7 +21,7 @@ function client(fetch) {
     roomReceiptRef: { current: null }, roomInitialSnapshotRef: { current: null }, roomConfirmationRef: { current: null }, roomWriteRef: { current: null }, roomPhotosRef: { current: [] },
     roomRequestRef: { current: null }, roomLeaseRef: { current: null }, roomSessionRef: { current: 0 }, roomFilesRef: { current: [] },
     roomPhotoVersionRef: { current: 0 }, roomCoverageRequestRef: { current: null }, roomUploadsRef: { current: new Map() },
-    roomAnalysisPhotosRef: { current: [] }, roomSaveFlowRef: { current: null }, roomCreateOperationRef: { current: null }, roomDetailRequestRef: { current: null }, createRoomOperationRef: { current: null }, galleryUploadRef: { current: null },
+    roomAnalysisPhotosRef: { current: [] }, roomSaveFlowRef: { current: null }, roomExistingLoadRef: { current: null }, roomCreateOperationRef: { current: null }, roomDetailRequestRef: { current: null }, createRoomOperationRef: { current: null }, galleryUploadRef: { current: null },
     rooms: [], roomChatDraft: '', roomChatBusy: false, view: 'room-review', loadRooms() {}, refreshHomeState() {}, loadInspiration() {}, resetSingleScan() {}, compressImage: async f => f,
     roomItems: [{ id: 'item-1', recommendation: 'sat', excluded: false }], roomMessages: [], roomPhotos: [],
     roomDraftDirty: false, roomLegacyApprovalUnknown: false, roomConfirming: false, roomScanSaved: false,
@@ -31,7 +31,7 @@ function client(fetch) {
   for (const name of ['RoomScanSaving','RoomScanSaved','RoomDraftDirty','RoomDraftError','RoomError','RoomItems',
     'RoomConfirming','HomeState','Celebration','View','RoomRecovery','RoomMessages','RoomScanNeedsRoom',
     'RoomLegacyApprovalUnknown','RoomPhotos','RoomAnalyzing','RoomScanSaveError','RoomScanSavedRoomName',
-    'RoomCoverageChecking','RoomCoverageResult','RoomChatDraft','RoomChatBusy','RoomChatError','Rooms','RoomDetail','RoomDetailLoading','RoomDetailError','RoomPhotoUploading','RoomCreating','RoomsError']) {
+    'RoomCoverageChecking','RoomCoverageResult','RoomChatDraft','RoomChatBusy','RoomChatError','Rooms','RoomDetail','RoomDetailLoading','RoomDetailError','RoomPhotoUploading','RoomCreating','RoomsError','RoomExistingPick','RoomExistingRetry']) {
     const key = name[0].toLowerCase() + name.slice(1);
     ctx['set' + name] = value => { ctx[key] = typeof value === 'function' ? value(ctx[key]) : value; };
   }
