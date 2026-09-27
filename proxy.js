@@ -93,19 +93,23 @@ export async function proxy(req) {
 
   const res = NextResponse.next();
   // Misafir kimligi client'in belirledigi bir sey degil: burada, sunucuda,
-  // imzali bir token olarak uretilir. Mevcut cookie gecersizse (yok, bozuk,
-  // imza uyusmuyor, suresi gecmis) HER ZAMAN yenisi mint edilir — asla eski
-  // degere guvenilmez.
-  if (!verifyGuestToken(req.cookies.get(GUEST_COOKIE)?.value)) {
-    const { token, expiresAt } = createGuestToken();
-    res.cookies.set(GUEST_COOKIE, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      expires: expiresAt,
-      path: '/',
-    });
-  }
+  // imzali bir token olarak uretilir. Bu, 1 saatlik HAREKETSIZLIK penceresi:
+  // buraya ulasan HER nitelikli istekte cookie yeniden imzalanir (rolling
+  // renewal). Mevcut cookie hala gecerliyse AYNI guestId ile yenilenir (yeni
+  // kimlik uretilmez); gecersizse (yok, bozuk, imza uyusmuyor, suresi gecmis)
+  // yeni bir kimlik mint edilir — eski degere hicbir kosulda guvenilmez.
+  // Statik dosyalar (matcher), PUBLIC_PATHS, /api/auth/* ve /admin* zaten bu
+  // noktaya ulasmadan return ettigi icin bu blok yalnizca gercek uygulama
+  // kullanimida calisir.
+  const existingGuestId = verifyGuestToken(req.cookies.get(GUEST_COOKIE)?.value);
+  const { token, expiresAt } = createGuestToken(existingGuestId || undefined);
+  res.cookies.set(GUEST_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    expires: expiresAt,
+    path: '/',
+  });
 
   // Sestia Kütüphanesi'nin "yeni ziyaret ile sayfa yenileme aynı şey
   // değildir" kuralı icin: expires/maxAge YOK — bu bilerek bir OTURUM
