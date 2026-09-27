@@ -1,8 +1,29 @@
 // @ts-check
 const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 async function acceptInvite(page) {
   await page.request.post('/api/access', { data: {} });
+}
+
+// Reads the isolated server directory published by
+// tests-browser/start-isolated-server.cjs, to directly simulate a
+// server-side idle timeout the same way tests/guest-onboarding-e2e.test.cjs
+// does — without waiting the real 5-minute guest deadline.
+function isolatedDb() {
+  const pointer = path.join(os.tmpdir(), 'sestia-browser-e2e-current.txt');
+  const directory = fs.readFileSync(pointer, 'utf8').trim();
+  const Database = require('better-sqlite3');
+  return new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
+}
+function expireSession(sessionId, idleTimeoutMs = 300000) {
+  const db = isolatedDb();
+  const lastActivity = Date.now() - (idleTimeoutMs + 100000);
+  db.prepare('UPDATE sestia_sessions SET last_activity_at_ms = ?, idle_expires_at_ms = ? WHERE id = ?')
+    .run(lastActivity, lastActivity + idleTimeoutMs, sessionId);
+  db.close();
 }
 
 // WelcomeView's intro stage (hitap question) only offers "skip" or "continue
@@ -95,5 +116,42 @@ test.describe('Session V2 — real browser', () => {
     const second = await pageB.request.get('/api/session').then((r) => r.json());
     expect(second.state).toBe('active');
     expect(second.ownerId).toBe(first.ownerId);
+  });
+
+  // HIGH-1 (SESTIA_SESSION_V2_INDEPENDENT_CODE_REVIEW.md): a genuinely idle
+  // tab must reach confirmed timeout and clear its private UI automatically
+  // — this must NOT require the user to click/type/interact again. Before
+  // the fix, the deadline/focus/visibility-triggered validate() call used a
+  // stale closure and never called endLifecycle(), so the private UI never
+  // reset without a subsequent (activity-triggering) interaction.
+  test('a genuinely idle session reaches confirmed timeout and clears the private UI with ZERO further user interaction', async ({ page }) => {
+    await acceptInvite(page);
+    await page.goto('/');
+    await (await reachGuestButton(page)).click();
+    await expect(page.locator('[data-screen="welcome"]')).toHaveCount(0, { timeout: 15000 });
+    const established = await page.request.get('/api/session').then((r) => r.json());
+    expect(established.state).toBe('active');
+
+    // Simulate ">5 minutes of true inactivity" server-side, without waiting
+    // real wall-clock time and WITHOUT the page performing any further
+    // click/keypress/input of any kind.
+    expireSession(established.sessionId);
+
+    // The only thing that happens next is a non-activity VALIDATION trigger
+    // (focus/visibilitychange) — never a qualifying activity event, and
+    // never anything the app root's activity listeners would report as
+    // interaction. This is exactly the deadline-timer's own trigger class,
+    // reproduced deterministically instead of waiting for the real
+    // scheduled setTimeout to fire 5 minutes later.
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // The private UI must clear itself automatically: the guest/account
+    // entry screen reappears without any click/keypress from the test.
+    await expect(page.getByRole('button', { name: /Şimdilik isimsiz devam et|Misafir olarak devam et/ })).toBeVisible({ timeout: 10000 });
+    const after = await page.request.get('/api/session').then((r) => r.json());
+    expect(after.ownerId).not.toBe(established.ownerId);
   });
 });

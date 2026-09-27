@@ -16,7 +16,7 @@ const SessionLifecycleContext = createContext(null);
 // localStorage guest-id heuristic or an implicit cookie the way the pre-V2
 // app did.
 export function SessionLifecycleProvider({ children, onLifecycleEnded }) {
-  const [status, setStatus] = useState({ state: 'unknown', identityType: null, ownerId: null });
+  const [status, setStatusState] = useState({ state: 'unknown', identityType: null, ownerId: null });
   const [warningVisible, setWarningVisible] = useState(false);
   const familyRevisionRef = useRef(null);
   const lastReportSentAtRef = useRef(null);
@@ -24,6 +24,19 @@ export function SessionLifecycleProvider({ children, onLifecycleEnded }) {
   const warningTimerRef = useRef(null);
   const lifecycleTokenRef = useRef(0); // bumped on every confirmed transition; in-flight work checks it before acting
   const channelRef = useRef(null);
+  // Mirrors `status` for reads from callbacks that must stay referentially
+  // stable across renders (scheduleTimers/validate below are captured ONCE,
+  // at mount, by effects with an empty dependency array — reading `status`
+  // directly from those closures would silently see stale, mount-time values
+  // forever, which previously meant the deadline/focus/visibility/broadcast
+  // -triggered validation could never detect "was active, now expired" and
+  // so never called endLifecycle(). Reading statusRef.current instead always
+  // sees the true current status, regardless of which render's closure runs.
+  const statusRef = useRef(status);
+  const setStatus = useCallback((next) => {
+    statusRef.current = next;
+    setStatusState(next);
+  }, []);
 
   const endLifecycle = useCallback((reason) => {
     lifecycleTokenRef.current += 1;
@@ -32,7 +45,7 @@ export function SessionLifecycleProvider({ children, onLifecycleEnded }) {
     if (channelRef.current) { try { channelRef.current.postMessage({ type: 'ended', reason }); } catch {} }
     try { localStorage.setItem(STORAGE_NOTIFY_KEY, JSON.stringify({ type: 'ended', reason, ts: Date.now() })); } catch {}
     onLifecycleEnded?.(reason);
-  }, [onLifecycleEnded]);
+  }, [onLifecycleEnded, setStatus]);
 
   const scheduleTimers = useCallback((warningAt, idleExpiresAt, serverNow) => {
     if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
@@ -57,6 +70,8 @@ export function SessionLifecycleProvider({ children, onLifecycleEnded }) {
 
   // Non-renewing status read — used at mount, on visibility/focus/pageshow
   // return, and near the locally-scheduled deadline. Never reports activity.
+  // Reads statusRef.current (never the `status` state variable directly) so
+  // this function can stay referentially stable — see statusRef above.
   const validate = useCallback(async () => {
     const myToken = lifecycleTokenRef.current;
     let res;
@@ -64,17 +79,17 @@ export function SessionLifecycleProvider({ children, onLifecycleEnded }) {
     if (myToken !== lifecycleTokenRef.current) return; // a newer lifecycle superseded this validation
     const data = await res.json().catch(() => null);
     if (!data) return;
+    const current = statusRef.current;
     if (data.state === 'active') {
-      const rotated = status.ownerId && data.ownerId && status.ownerId !== data.ownerId;
+      const rotated = current.ownerId && data.ownerId && current.ownerId !== data.ownerId;
       applyActiveStatus(data);
       if (rotated) endLifecycle('rotated');
-    } else if (status.state === 'active') {
+    } else if (current.state === 'active') {
       endLifecycle(data.state);
     } else {
       setStatus({ state: data.state, identityType: data.identityType || null, ownerId: null });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyActiveStatus, endLifecycle, status.ownerId, status.state]);
+  }, [applyActiveStatus, endLifecycle, setStatus]);
 
   // Establishes the browser coordination scope and reads initial status.
   useEffect(() => {

@@ -72,6 +72,44 @@ test('login intent is single use and bound to family revision; reads do not crea
   assert.throws(()=>f.store.account(f.family.id,i,'a'));assert.equal(f.store.check(s.sessionId,'foreign').state,'session_required');
   assert.equal(f.store.check('legacy',f.family.id).state,'session_required');assert.equal(f.db.prepare('SELECT count(*) n FROM sestia_sessions').get().n,1);f.db.close();
 });
+// Policy snapshot (SESTIA_SESSION_V2_INDEPENDENT_CODE_REVIEW.md HIGH-2): each
+// session's own idle_timeout_ms/warning_after_ms is an immutable server-
+// issued snapshot. Ordinary future changes to the CURRENT policy's timing
+// VALUES must affect new sessions only, never silently revoke an already
+// -active one — only an explicit policy_version change is the intended
+// invalidation mechanism. Simulated here by directly diverging a row's own
+// stored snapshot from what resolvePolicy('staging-idle-v2', kind) actually
+// returns (there being only one real named policy to resolve against),
+// which is exactly what "the deployed policy's numbers were retuned"
+// looks like from check()'s point of view.
+test('policy snapshot: ordinary timing-value drift (same policy_version) does not revoke an active session', () => {
+  const f = fixture(), s = f.start('guest');
+  const row = f.db.prepare('SELECT last_activity_at_ms FROM sestia_sessions WHERE id=?').get(s.sessionId);
+  const driftedTimeout = 999999;
+  f.db.prepare('UPDATE sestia_sessions SET idle_timeout_ms=?, warning_after_ms=?, idle_expires_at_ms=? WHERE id=?')
+    .run(driftedTimeout, 111111, row.last_activity_at_ms + driftedTimeout, s.sessionId);
+  const result = f.store.check(s.sessionId, f.family.id);
+  assert.equal(result.state, 'active', 'a retuned CURRENT policy value must never revoke an already-established session');
+  f.db.close();
+});
+test('policy snapshot: an explicit policy_version mismatch still invalidates the session', () => {
+  const f = fixture(), s = f.start('guest');
+  f.db.prepare('UPDATE sestia_sessions SET policy_version = ? WHERE id = ?').run(999, s.sessionId);
+  const result = f.store.check(s.sessionId, f.family.id);
+  assert.equal(result.state, 'session_revoked', 'a policy_version mismatch is the intended, explicit invalidation mechanism');
+  f.db.close();
+});
+test('policy snapshot: a newly established session always gets the current real policy snapshot, unaffected by another row\'s manual drift', () => {
+  const f = fixture(), old = f.start('guest');
+  const oldRow = f.db.prepare('SELECT last_activity_at_ms FROM sestia_sessions WHERE id=?').get(old.sessionId);
+  f.db.prepare('UPDATE sestia_sessions SET idle_timeout_ms=2, warning_after_ms=1, idle_expires_at_ms=? WHERE id=?')
+    .run(oldRow.last_activity_at_ms + 2, old.sessionId);
+  f.at(300000);
+  const fresh = f.start('guest');
+  const freshRow = f.db.prepare('SELECT idle_timeout_ms, warning_after_ms, policy_version FROM sestia_sessions WHERE id=?').get(fresh.sessionId);
+  assert.deepEqual(freshRow, { idle_timeout_ms: 300000, warning_after_ms: 180000, policy_version: 2 });
+  f.db.close();
+});
 test('credentials are versioned, purpose separated, signed and reject legacy/forged values',()=>{
   const id=randomUUID(),s='fake-test-secret';const token=credentials.sign('guest',id,s);
   assert.equal(credentials.verify('guest',token,s),id);assert.equal(credentials.verify('scope',token,s),null);

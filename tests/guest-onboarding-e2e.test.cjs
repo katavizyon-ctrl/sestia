@@ -262,6 +262,37 @@ async function check(name, fn) {
     assert.equal(account.name, 'Ayşe');
   });
 
+  // HIGH-3 (SESTIA_SESSION_V2_INDEPENDENT_CODE_REVIEW.md): account
+  // establishment must record visitor metadata too, not only guest
+  // establishment, using the same privacy-safe model (no raw IP, no
+  // renewal of session activity).
+  await check('account Session V2 establishment records visitor metadata (device/browser, no raw IP, no activity renewal)', async () => {
+    const h = browser();
+    await arrive(h);
+    const before = await (await h.request('/api/session')).json();
+    await signUpWithCode(h, 'visitmeta@example.test', 'Visit Meta');
+    const after = await (await h.request('/api/session')).json();
+    assert.equal(after.state, 'active');
+    assert.equal(after.identityType, 'account');
+    const db = dbConn();
+    const row = db.prepare('SELECT * FROM session_visit_metadata WHERE session_id = ?').get(after.sessionId);
+    db.close();
+    assert.ok(row, 'an account session must have its own visit-metadata row, same as a guest session');
+    assert.ok(row.device_class && row.browser, 'device/browser must be populated for an account session too');
+    assert.equal(Object.keys(row).some((c) => /ip/i.test(c) && row[c] != null && typeof row[c] === 'string' && row[c].includes('.')), false,
+      'no column resembling a raw IP address may be populated');
+    assert.equal(JSON.stringify(row).match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/), null, 'no IPv4-shaped value anywhere in the recorded row');
+    // Recording visit metadata (an account establishment side effect) must
+    // never itself count as/trigger a session_visit_metadata... nor renew
+    // idle activity: the account session's own last_activity_at_ms must be
+    // exactly its creation time, unaffected by the metadata-recording step
+    // that runs immediately alongside it.
+    const db2 = dbConn();
+    const sessionRow = db2.prepare('SELECT created_at_ms, last_activity_at_ms FROM sestia_sessions WHERE id = ?').get(after.sessionId);
+    db2.close();
+    assert.equal(sessionRow.last_activity_at_ms, sessionRow.created_at_ms, 'visit-metadata capture must not move last_activity_at_ms');
+  });
+
   await check('anonymous email/account: no name required, none invented, stale pending name discarded', async () => {
     const e = browser();
     await arrive(e);

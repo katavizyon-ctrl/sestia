@@ -10,6 +10,11 @@ const { spawn } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const PORT = process.env.SESTIA_BROWSER_TEST_PORT || '3005';
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sestia-browser-e2e-'));
+// Published at a fixed, predictable path so the Playwright spec (a separate
+// process) can locate this run's isolated database for direct read/write
+// simulation of server-side session expiry (same technique as
+// tests/guest-onboarding-e2e.test.cjs), without waiting real wall-clock time.
+fs.writeFileSync(path.join(os.tmpdir(), 'sestia-browser-e2e-current.txt'), directory);
 for (const name of ['app', 'lib', 'components', 'public', 'SESTIA_BILGI_KUTUPHANESI', 'package.json', 'next.config.mjs', 'jsconfig.json', 'proxy.js']) {
   fs.cpSync(path.join(root, name), path.join(directory, name), { recursive: true });
 }
