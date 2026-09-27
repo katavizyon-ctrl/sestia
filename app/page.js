@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { compressImage, getLastRoom, setLastRoom, getUserName, setUserName } from '@/lib/client';
+import { SessionLifecycleProvider, useSessionLifecycle } from '@/components/SessionLifecycleProvider';
 import { ROOM_OPTIONS, DEFAULT_ROOM, MAX_ROOM_PHOTOS, MAX_UPLOAD_BYTES, ASSISTANT_NAME } from '@/lib/constants';
 import { logEvent } from '@/lib/telemetry';
 import FeedbackButton from '@/components/FeedbackButton';
@@ -48,7 +49,31 @@ function landingView(state) {
   return state?.totalDecisions > 0 || state?.hasStartedWork ? 'home' : 'discover';
 }
 
+// Session lifecycle end (idle timeout, logout, or a rotated identity
+// detected by SessionLifecycleProvider) unmounts and remounts the entire
+// private subtree below by bumping `gen` — the same "reset by remount"
+// pattern this file already used for SestiaChat's `key={currentIdentityId}`,
+// just applied to the whole app instead of one component. This clears every
+// piece of local React state (rooms, photos, analysis, chat, Toparla
+// confirm/result UI, drafts) at once, rather than manually nulling out each
+// of PageInner's several dozen useState calls one by one.
 export default function Page() {
+  const [gen, setGen] = useState(0);
+  function handleLifecycleEnded() {
+    // boba_last_room is a plain localStorage preference, not React state —
+    // remounting PageInner does not clear it on its own, and it is not
+    // guest-id-scoped the way getUserName/setUserName already are.
+    setLastRoom(null);
+    setGen((g) => g + 1);
+  }
+  return (
+    <SessionLifecycleProvider onLifecycleEnded={handleLifecycleEnded}>
+      <PageInner key={gen} />
+    </SessionLifecycleProvider>
+  );
+}
+
+function PageInner() {
   const [view, setView] = useState('home');
   const [chatContext, setChatContext] = useState(null);
   const [identityLoaded, setIdentityLoaded] = useState(false);
@@ -216,6 +241,17 @@ export default function Page() {
           setHomeError(null);
           return;
         }
+        // Session V2: no active guest/account session yet — this is the
+        // normal state for a brand-new visitor (or right after a confirmed
+        // timeout's remount), not a connectivity error. Show the existing
+        // guest/account entry experience; no new screen.
+        if (body.error === 'session_required') {
+          setSignInRequired(null);
+          setHomeError(null);
+          setHomeState((prev) => ({ ...prev, emailReady: Boolean(body.emailReady) }));
+          setShowWelcome(true);
+          return;
+        }
       }
       if (!res.ok) throw new Error('state_failed');
       const data = await res.json();
@@ -264,7 +300,7 @@ export default function Page() {
         const hasName = data.identityType === 'guest' && (Boolean(getUserName(data.identityId)) || skippedName);
         const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId && hasName;
         if (data.identityType !== 'account' && !isKnownGuest) setShowWelcome(true);
-        else setView(landingView(data));
+        else { setShowWelcome(false); setView(landingView(data)); }
       }
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
@@ -1430,6 +1466,11 @@ export default function Page() {
   const mainSurface = ['home', 'discover', 'rooms', 'chat'].includes(view);
   if (!identityLoaded) return <div className="app"><div className="scroll sestia-onboarding"><Brand/><p role="status" className="muted">Birlikte başlıyoruz…</p></div></div>;
   if (signInRequired) return <div className="app" data-screen="sign-in"><WelcomeView emailOnly emailReady={signInRequired.emailReady} currentIdentityId={null} onGuestStart={() => {}} /></div>;
+  // Session V2: a brand-new visitor (or the remounted app right after a
+  // confirmed timeout) genuinely has no identity yet — this is the normal
+  // guest/account entry point, not a connectivity failure, so it must be
+  // checked BEFORE the generic "no identity -> retry" error screen below.
+  if (showWelcome && !currentIdentityId) return <div className="app" data-screen="welcome"><WelcomeView onGuestStart={() => refreshHomeState(true)} currentIdentityId={null} emailReady={homeState.emailReady} /></div>;
   if (!currentIdentityId) return <div className="app"><div className="scroll"><PageHeading title="Bağlantıyı yeniden deneyelim."/><p className="errbox">{homeError}</p><button className="btn-primary" onClick={()=>refreshHomeState(true)}>Tekrar dene</button></div></div>;
   return (
     <div className={`app${mainSurface && !showWelcome ? ' sestia-with-nav' : ''}`} data-screen={showWelcome ? 'welcome' : view}>
@@ -1690,6 +1731,14 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
   const [errorDetail, setErrorDetail] = useState(null); // Auth.js'in dondurdugu ham hata kodu (varsa)
   const [code, setCode] = useState('');
   const [codeSubmitting, setCodeSubmitting] = useState(false);
+  const [guestSubmitting, setGuestSubmitting] = useState(false);
+  // Deferred: skipping the hitap question happens BEFORE a brand-new
+  // guest identity exists (Session V2 never implicitly creates one), so the
+  // flag can't yet be stamped against a real id — chooseGuest() below stamps
+  // it against whichever id (existing active guest, or freshly established)
+  // actually ends up owning this visit.
+  const [nameSkipped, setNameSkipped] = useState(false);
+  const sessionLifecycle = useSessionLifecycle();
 
   // E-postadaki 6 haneli kod: Auth.js'in doğrulama adresine AYNI tarayıcıda
   // gidilir; e-posta, Auth.js'in normalize ettiği biçimde gönderilmeli
@@ -1737,6 +1786,13 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
     setStatus(null);
     setErrorDetail(null);
     try {
+      // Binds this login attempt to the current browser's Session V2 family
+      // BEFORE Auth.js's own signIn() call, so the verified callback later
+      // knows this account session belongs to this exact browser (see
+      // lib/auth.js's jwt() callback). Best-effort: if it fails, the
+      // eventual login still completes as a normal Auth.js session, it just
+      // won't gain Session V2 idle-timeout binding until a fresh attempt.
+      await fetch('/api/session/login-intent', { method: 'POST' }).catch(() => {});
       const pre = await fetch('/api/account/precheck', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1793,20 +1849,40 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
     }
   }
 
-  function chooseGuest() {
-    // Bayragi, TAM OLARAK su an gecerli olan misafir kimlik id'siyle
-    // damgaliyoruz — ileride bu kimlik sessizce degisirse (silinme/sifirlanma)
-    // bayrak artik eslesmeyecegi icin otomatik gecersiz sayilir.
+  async function chooseGuest() {
+    if (guestSubmitting) return;
+    setGuestSubmitting(true);
+    // Session V2 never implicitly creates a guest: if one isn't already
+    // active for this browser (alreadyGuest/currentIdentityId case), this is
+    // the ONE explicit action that establishes it.
+    let ownerId = sessionLifecycle?.status?.state === 'active' ? sessionLifecycle.status.ownerId : (currentIdentityId || null);
+    if (sessionLifecycle?.status?.state !== 'active') {
+      try {
+        const established = await sessionLifecycle?.establishGuest?.();
+        ownerId = established?.ownerId || null;
+      } catch {
+        // Establishment failed (e.g. a stale revision from a concurrent
+        // tab) — proceed anyway; onGuestStart's own refresh will surface
+        // session_required again and the user can retry.
+      }
+    }
+    const cleanName = name.trim();
+    if (ownerId && cleanName) setUserName(cleanName, ownerId);
     try {
-      if (currentIdentityId) localStorage.setItem('sestia_guest_id_confirmed', currentIdentityId);
+      if (ownerId) {
+        localStorage.setItem('sestia_guest_id_confirmed', ownerId);
+        if (nameSkipped) localStorage.setItem('sestia_intro_skipped', ownerId);
+      }
     } catch {}
+    setGuestSubmitting(false);
     onGuestStart();
   }
 
   // Hitap ekranı tek kaynak: isimsiz geçen biri, yarım yazdığı bir ismi ne
-  // misafir olarak ne de hesaba taşır.
+  // misafir olarak ne de hesaba taşır. The actual localStorage stamp is
+  // deferred to chooseGuest() above, once a real identity is known.
   function skipName() {
-    try { if(currentIdentityId) localStorage.setItem('sestia_intro_skipped', currentIdentityId); } catch {}
+    setNameSkipped(true);
     setName('');
     setStage('method');
   }
@@ -1834,7 +1910,7 @@ function WelcomeView({ onGuestStart, currentIdentityId, emailReady, alreadyGuest
         {status==='error' && <p role="alert" className="errbox">E-posta gönderilemedi{errorDetail?` (${EMAIL_ERROR_LABELS[errorDetail]||'Bağlantı sorunu'})`:''}. Tekrar dener misin?</p>}
         <button className="btn-primary" disabled={submitting||!email.trim()}>{submitting?'Gönderiliyor…':'Giriş kodu gönder'}<ChevronRightIcon/></button>
       </form> : emailOnly ? <div className="card"><h2>Giriş şu anda hazır değil.</h2><p className="muted">E-posta gönderimi henüz açılmadı. Biraz sonra yeniden dener misin?</p></div> : <div className="card"><h2>Misafir olarak keşfet.</h2><p className="muted">E-posta ile giriş şu anda hazır değil. Sestia ile konuşabilir, fotoğraflarına birlikte bakabilirsin.</p></div>}
-      {!emailOnly && <>{emailReady && <div className="sestia-divider">veya</div>}<button className={emailReady?'btn-outline':'btn-primary'} disabled={submitting} onClick={()=>{saveNameLocally();chooseGuest();}}>Misafir olarak devam et <ChevronRightIcon/></button></>}
+      {!emailOnly && <>{emailReady && <div className="sestia-divider">veya</div>}<button className={emailReady?'btn-outline':'btn-primary'} disabled={submitting||guestSubmitting} onClick={chooseGuest}>Misafir olarak devam et <ChevronRightIcon/></button></>}
     </>}
     </div>
   </section>;

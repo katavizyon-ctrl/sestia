@@ -23,7 +23,10 @@ export async function GET() {
     if (privateAccess.emailRequired()) {
       return NextResponse.json({ error: 'sign_in_required', emailReady: isEmailReady() }, { status: 401 });
     }
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    // Session V2: no active guest/account session yet (never established,
+    // idle-expired, or revoked) — distinct from a real connectivity/auth
+    // failure so the client shows guest/account entry, not a generic error.
+    return NextResponse.json({ error: 'session_required', emailReady: isEmailReady() }, { status: 401 });
   }
   const state = getState(identity.id);
   const homeMessage = getHomeMessage(identity.id);

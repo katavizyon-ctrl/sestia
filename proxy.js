@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
-import { GUEST_COOKIE, createGuestToken, verifyGuestToken } from '@/lib/guestToken';
+import crypto from 'crypto';
+import { GUEST_COOKIE as LEGACY_GUEST_COOKIE } from '@/lib/guestToken';
 import accessTokens from '@/lib/accessToken.cjs';
 import { getToken } from 'next-auth/jwt';
 import privateAccess from '@/lib/privateAccess.cjs';
 import attemptLimiter from '@/lib/attemptLimiter.cjs';
+import { sessions } from '@/lib/db';
+import credentials from '@/lib/sessionCredentials.cjs';
 
 const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/health', '/giris-hatasi'];
 
@@ -24,6 +27,28 @@ function limitCodeAttempts(req) {
   return null;
 }
 
+const cookieOpts = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' };
+
+// Session V2's browser coordination scope (lib/sessionStore.cjs's
+// sestia_session_families). Harmless/no-private-data — this is the ONLY
+// thing proxy.js still mints unconditionally; an actual guest SESSION is
+// never implicitly created here (see POST /api/session/guest).
+function ensureFamilyCookie(req, res) {
+  const raw = req.cookies.get(credentials.SCOPE_COOKIE)?.value;
+  const existing = raw && credentials.verify('scope', raw, process.env.AUTH_SECRET);
+  if (existing && sessions.family(existing)) return existing;
+  const family = sessions.bootstrap();
+  res.cookies.set(credentials.SCOPE_COOKIE, credentials.sign('scope', family.id, process.env.AUTH_SECRET), cookieOpts);
+  return family.id;
+}
+
+// Hygiene only: lib/session.js never reads this legacy cookie for
+// authorization, so leaving it is not a security issue by itself, but a
+// stale multi-hundred-day cookie serves no purpose once Session V2 is live.
+function clearLegacyGuestCookie(req, res) {
+  if (req.cookies.get(LEGACY_GUEST_COOKIE)?.value) res.cookies.delete(LEGACY_GUEST_COOKIE);
+}
+
 export async function proxy(req) {
   const { pathname } = req.nextUrl;
   const limited = limitCodeAttempts(req);
@@ -37,12 +62,20 @@ export async function proxy(req) {
       // Decode the same encrypted Auth.js JWT; never trust client-side profile data.
       const token = await getToken({ req, secret: process.env.AUTH_SECRET,
         secureCookie: process.env.NODE_ENV === 'production' });
-      if (token?.sub && privateAccess.isAllowedEmail(token.email)) {
-        response = NextResponse.next();
-      } else if (pathname.startsWith('/api/')) {
-        response = NextResponse.json({ error: 'private_access_required' }, { status: 401 });
-      } else {
-        response = NextResponse.redirect(new URL('/ozel-giris', req.url));
+      response = NextResponse.next();
+      const familyId = ensureFamilyCookie(req, response);
+      // Session V2 binding is REQUIRED here too — a cryptographically valid
+      // but idle-expired/revoked JWT must not bypass the same account idle
+      // policy the rest of the app enforces (no JWT-only shortcut for
+      // owner-mode pages, per the implementation task's explicit instruction).
+      const sessionOk = token?.sub && token?.sestiaSid && privateAccess.isAllowedEmail(token.email)
+        && sessions.check(token.sestiaSid, familyId).state === 'active';
+      if (!sessionOk) {
+        if (pathname.startsWith('/api/')) {
+          response = NextResponse.json({ error: 'private_access_required' }, { status: 401 });
+        } else {
+          response = NextResponse.redirect(new URL('/ozel-giris', req.url));
+        }
       }
     }
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
@@ -92,36 +125,21 @@ export async function proxy(req) {
   }
 
   const res = NextResponse.next();
-  // Misafir kimligi client'in belirledigi bir sey degil: burada, sunucuda,
-  // imzali bir token olarak uretilir. Bu, 1 saatlik HAREKETSIZLIK penceresi:
-  // buraya ulasan HER nitelikli istekte cookie yeniden imzalanir (rolling
-  // renewal). Mevcut cookie hala gecerliyse AYNI guestId ile yenilenir (yeni
-  // kimlik uretilmez); gecersizse (yok, bozuk, imza uyusmuyor, suresi gecmis)
-  // yeni bir kimlik mint edilir — eski degere hicbir kosulda guvenilmez.
-  // Statik dosyalar (matcher), PUBLIC_PATHS, /api/auth/* ve /admin* zaten bu
-  // noktaya ulasmadan return ettigi icin bu blok yalnizca gercek uygulama
-  // kullanimida calisir.
-  const existingGuestId = verifyGuestToken(req.cookies.get(GUEST_COOKIE)?.value);
-  const { token, expiresAt } = createGuestToken(existingGuestId || undefined);
-  res.cookies.set(GUEST_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    expires: expiresAt,
-    path: '/',
-  });
+  // Session V2: proxy only ever bootstraps the no-private-data coordination
+  // scope. It NEVER mints or renews a guest identity/session anymore — that
+  // is now an explicit action (POST /api/session/guest) and an explicit,
+  // deliberate-interaction-driven renewal (POST /api/session/activity), not
+  // a side effect of "any request reached this line" (see the architecture's
+  // GST-06 fix: ordinary traffic must not extend a session).
+  ensureFamilyCookie(req, res);
+  clearLegacyGuestCookie(req, res);
 
   // Sestia Kütüphanesi'nin "yeni ziyaret ile sayfa yenileme aynı şey
   // değildir" kuralı icin: expires/maxAge YOK — bu bilerek bir OTURUM
   // cookie'si (taraycı kapanınca silinir), sayfa yenilemede kalıcı. Yeni bir
   // değer SADECE cookie hiç yoksa üretilir (bkz. lib/db.js:getSestiaLibrarySelection).
   if (!req.cookies.get('sestia_visit')?.value) {
-    res.cookies.set('sestia_visit', crypto.randomUUID(), {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-    });
+    res.cookies.set('sestia_visit', crypto.randomUUID(), cookieOpts);
   }
   return res;
 }

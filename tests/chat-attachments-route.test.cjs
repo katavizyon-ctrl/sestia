@@ -22,6 +22,8 @@ function loadApi(db) {
     creationStore: require('../lib/creationStore.cjs'),
     toparlaStore: require('../lib/toparlaStore.cjs'),
     chatAttachmentStore: require('../lib/chatAttachmentStore.cjs'),
+    sessionStoreModule: require('../lib/sessionStore.cjs'),
+    visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),
   };
   vm.createContext(ctx);
   vm.runInContext(code + ';globalThis.api={chatAttachments};', ctx);

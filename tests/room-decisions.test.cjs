@@ -574,7 +574,9 @@ function loadApi(db) {
   const ctx = { __testDb: db, roomDecisionStore, path, process: { cwd: () => path.dirname(db.name) },
     creationStore: require(path.join(__dirname, '../lib/creationStore.cjs')),
     toparlaStore: require(path.join(__dirname, '../lib/toparlaStore.cjs')),
-    chatAttachmentStore: require(path.join(__dirname, '../lib/chatAttachmentStore.cjs')) };
+    chatAttachmentStore: require(path.join(__dirname, '../lib/chatAttachmentStore.cjs')),
+    sessionStoreModule: require(path.join(__dirname, '../lib/sessionStore.cjs')),
+    visitMetadataStoreModule: require(path.join(__dirname, '../lib/visitMetadataStore.cjs')) };
   vm.createContext(ctx);
   vm.runInContext(code + ';globalThis.api={roomDecisions,createRoom,getState,getRoomScan,getRoomAnalyses,saveRoomAnalysis,saveRoomScan,recordDecisions,creations,addRoomPhoto};', ctx);
   return ctx.api;

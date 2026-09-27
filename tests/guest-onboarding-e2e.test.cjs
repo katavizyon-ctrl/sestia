@@ -1,14 +1,21 @@
-// Guest onboarding regression — part of `npm test` (also runnable directly:
-// node tests/guest-onboarding-e2e.test.cjs). Starts an isolated `next dev` in
-// a temp copy with its own empty database.
+// Guest/account onboarding regression under Session V2 — part of `npm test`
+// (also runnable directly: node tests/guest-onboarding-e2e.test.cjs). Starts
+// an isolated `next dev` in a temp copy with its own empty database.
 // No credentials, user data or network services; EMAIL_LOGIN_REQUIRED=1 is set
 // on purpose, because that is how staging refused guests before the fix.
+//
+// Exact per-kind timing boundaries are already proven deterministically,
+// with an injected clock, in tests/session-store.test.cjs (23 tests) — this
+// file focuses on what only a real server/routes/Auth.js integration can
+// prove: explicit establishment, real cookies, real ownership across HTTP
+// calls, and legacy-credential rejection.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const credentials = require('../lib/sessionCredentials.cjs');
 const root = path.resolve(__dirname, '..');
 const PORT = 3004;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -22,6 +29,7 @@ const env = {};
 for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'COMSPEC', 'ComSpec']) if (process.env[key]) env[key] = process.env[key];
 Object.assign(env, { NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1', AUTH_SECRET, ACCESS_CODE: 'e2e',
   ADMIN_ACCESS_CODE: 'e2e-admin', ANTHROPIC_API_KEY: 'isolated-no-real-key', EMAIL_LOGIN_REQUIRED: '1',
+  SESTIA_SESSION_POLICY: 'staging-idle-v2',
   // Placeholder values so the Resend provider is configured; the tests never
   // request an email, they insert the code into the isolated database instead.
   RESEND_API_KEY: 're_isolated_not_a_real_key', AUTH_EMAIL_FROM: 'SESTIA E2E <e2e@example.test>' });
@@ -30,6 +38,22 @@ const child = spawn(process.execPath, [path.join(root, 'node_modules/next/dist/b
 let log = '';
 child.stdout.on('data', (d) => { log += d; });
 child.stderr.on('data', (d) => { log += d; });
+
+function dbConn() {
+  const Database = require('better-sqlite3');
+  return new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
+}
+// Directly pushes a session's own last_activity/idle_expires_at into the
+// past to simulate true inactivity without waiting real wall-clock time —
+// must respect the same CHECK(idle_expires_at_ms = last_activity_at_ms +
+// idle_timeout_ms) constraint lib/sessionStore.cjs's schema enforces.
+function expireSession(sessionId, idleTimeoutMs = 300000) {
+  const db = dbConn();
+  const lastActivity = Date.now() - (idleTimeoutMs + 100000);
+  db.prepare('UPDATE sestia_sessions SET last_activity_at_ms = ?, idle_expires_at_ms = ? WHERE id = ?')
+    .run(lastActivity, lastActivity + idleTimeoutMs, sessionId);
+  db.close();
+}
 
 // Minimal cookie jar: one per simulated browser.
 function browser() {
@@ -48,26 +72,26 @@ function browser() {
     },
   };
 }
-// Invite gate (skipped code in dev) + first page load, like a real visit; the
-// page load is where proxy.js mints the signed guest cookie.
+
+// Invite gate (skipped code in dev) + first page load (mints the family/
+// scope cookie only — no private identity yet) + explicit guest
+// establishment, exactly as the real WelcomeView "Misafir olarak devam et"
+// button now does via SessionLifecycleProvider.establishGuest().
+async function establishGuestOnly(b) {
+  const boot = await (await b.request('/api/session/bootstrap', { method: 'POST' })).json();
+  const est = await b.request('/api/session/guest', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ familyRevision: boot.familyRevision, creationKey: crypto.randomUUID() }) });
+  assert.equal(est.status, 200, 'explicit guest establishment succeeds');
+  assert.ok(b.jar.get(credentials.GUEST_COOKIE), 'guest establishment sets the v2 guest cookie');
+  return est.json();
+}
 async function arrive(b) {
   assert.equal((await b.request('/api/access', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })).status, 200);
   const page = await b.request('/');
   assert.equal(page.status, 200, 'app page opens after the invite gate');
-  assert.ok(b.jar.get('guest_session'), 'proxy minted a guest cookie');
-}
-// Hand-crafts a correctly-signed guest_session value for an arbitrary
-// (guestId, expires) pair, exactly the way lib/guestToken.js signs its own
-// tokens. Lets the 1-hour rolling-inactivity boundary be tested deterministically
-// — "already renewed 1 minute ago" or "expired 1 second ago" — without ever
-// waiting real wall-clock time.
-function signGuestToken(guestId, expiresMs) {
-  const payload = `${guestId}.${expiresMs}`;
-  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
-  return `${payload}.${sig}`;
-}
-function guestTokenExpiry(cookieValue) {
-  return Number(cookieValue.split('.')[1]);
+  assert.ok(b.jar.get(credentials.SCOPE_COOKIE), 'proxy bootstrapped the (no-private-data) family scope cookie');
+  assert.equal(b.jar.get('guest_session'), undefined, 'proxy never mints a guest identity implicitly anymore');
+  return establishGuestOnly(b);
 }
 async function state(b) {
   const res = await b.request('/api/state');
@@ -79,16 +103,18 @@ async function createRoom(b, name) {
   assert.equal(res.status, 200, `room create: ${res.status}`);
   return res.json();
 }
-// The existing email/code flow after the email card: precheck with the
-// onboarding name (or none), then the 6-digit code through Auth.js's real
-// callback. The code is stored the way Auth.js stores it (sha256(code+secret)).
+// The existing email/code flow after the email card: bind a login intent
+// (as WelcomeView.submitEmail now does), precheck, then the 6-digit code
+// through Auth.js's real callback. The code is stored the way Auth.js stores
+// it (sha256(code+secret)).
 async function signUpWithCode(b, email, name) {
+  const intentRes = await b.request('/api/session/login-intent', { method: 'POST' });
+  assert.equal(intentRes.status, 200, `login-intent: ${intentRes.status}`);
   const pre = await b.request('/api/account/precheck', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ flow: 'signup', name, email }) });
   assert.equal(pre.status, 200, `precheck must not block: ${pre.status} ${await pre.text()}`);
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-  const Database = require('better-sqlite3');
-  const db = new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
+  const db = dbConn();
   db.prepare('INSERT INTO auth_verificationToken (identifier, token, expires) VALUES (?, ?, ?)')
     .run(email, crypto.createHash('sha256').update(`${code}${AUTH_SECRET}`).digest('hex'), Date.now() + 15 * 60 * 1000);
   db.close();
@@ -121,7 +147,7 @@ async function check(name, fn) {
   const a = browser();
   const b = browser();
 
-  await check('guest auth: invite gate -> app -> /api/state answers with a guest identity', async () => {
+  await check('guest auth: invite gate -> explicit establishment -> /api/state answers with a guest identity', async () => {
     await arrive(a);
     const s = await state(a);
     assert.equal(s.status, 200, `expected 200, got ${s.status} ${JSON.stringify(s.body)}`);
@@ -130,12 +156,46 @@ async function check(name, fn) {
     assert.equal(s.body.name, null, 'server never invents a guest name');
   });
 
-  await check('anonymous guest refresh keeps the same identity', async () => {
+  await check('before explicit establishment, /api/state reports session_required, not a connectivity error', async () => {
+    const fresh = browser();
+    await fresh.request('/api/access', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
+    await fresh.request('/'); // bootstraps the family cookie only
+    const res = await fresh.request('/api/state');
+    const body = await res.json();
+    assert.equal(res.status, 401);
+    assert.equal(body.error, 'session_required');
+  });
+
+  await check('anonymous guest refresh keeps the same identity (no activity report sent)', async () => {
     const first = (await state(a)).body.identityId;
     await a.request('/');
     const again = await state(a);
     assert.equal(again.status, 200);
     assert.equal(again.body.identityId, first);
+  });
+
+  await check('POST /api/session/activity renews the same session and pushes the deadline forward', async () => {
+    const before = await (await a.request('/api/session')).json();
+    const res = await a.request('/api/session/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'click', eventAt: Date.now() }) });
+    assert.equal(res.status, 200);
+    const after = await res.json();
+    assert.ok(after.idleExpiresAt >= before.idleExpiresAt, 'accepted activity never moves the deadline backwards');
+    assert.equal((await state(a)).body.identityId, before.ownerId, 'still the same identity after renewal');
+  });
+
+  await check('background/status traffic (GET /api/session, health) never renews activity', async () => {
+    const before = await (await a.request('/api/session')).json();
+    for (let i = 0; i < 5; i += 1) await a.request('/api/session');
+    await a.request('/api/health');
+    const after = await (await a.request('/api/session')).json();
+    assert.equal(after.idleExpiresAt, before.idleExpiresAt, 'plain status/health reads must not extend the deadline');
+  });
+
+  await check('an out-of-window (>15s old) activity report is rejected, not silently accepted', async () => {
+    const res = await a.request('/api/session/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'click', eventAt: Date.now() - 20000 }) });
+    assert.equal(res.status, 400);
   });
 
   await check('data isolation: guest B cannot list or open guest A rooms', async () => {
@@ -157,29 +217,42 @@ async function check(name, fn) {
   await check('forged or missing guest cookie is not accepted', async () => {
     const c = browser();
     await c.request('/api/access', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
-    c.jar.set('guest_session', `${a.jar.get('guest_session').split('.').slice(0, 2).join('.')}.forged`);
+    await c.request('/');
+    c.jar.set(credentials.GUEST_COOKIE, `${a.jar.get(credentials.GUEST_COOKIE).split('.').slice(0, 2).join('.')}.${'0'.repeat(64)}`);
     const res = await c.request('/api/rooms');
-    assert.equal(res.status, 401, 'a tampered cookie is replaced, never trusted');
+    assert.equal(res.status, 401, 'a tampered cookie is never trusted, and is never silently replaced with a new identity either');
+  });
+
+  await check('legacy a68405f-era guest_session cookie is never imported/resumed into Session V2', async () => {
+    const c = browser();
+    await c.request('/api/access', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
+    await c.request('/');
+    // Exactly the old (pre-V2) signed format: guestId.expires.hmac256(AUTH_SECRET).
+    const guestId = crypto.randomUUID();
+    const payload = `${guestId}.${Date.now() + 60 * 60 * 1000}`;
+    const legacyToken = `${payload}.${crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex')}`;
+    c.jar.set('guest_session', legacyToken);
+    const res = await c.request('/api/state');
+    assert.equal(res.status, 401, 'a correctly-signed LEGACY token must still be rejected — Session V2 never reads guest_session for authorization');
+    assert.equal((await res.json()).error, 'session_required');
   });
 
   await check('account session still resolves to the account (and wins over a guest cookie)', async () => {
     const { encode } = await import(require('node:url').pathToFileURL(path.join(root, 'node_modules/next-auth/jwt.js')).href);
     const userId = `e2e-account-${crypto.randomUUID()}`;
-    const Database = require('better-sqlite3');
-    const db = new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
+    const db = dbConn();
     db.prepare('INSERT INTO auth_user (id, name, email) VALUES (?, ?, ?)').run(userId, 'Hesap Test', `${userId}@example.test`);
     db.close();
-    const token = await encode({ token: { sub: userId, id: userId, email: `${userId}@example.test` }, secret: AUTH_SECRET, salt: 'authjs.session-token' });
-    a.jar.set('authjs.session-token', token);
-    const s = await state(a);
-    assert.equal(s.status, 200);
-    assert.equal(s.body.identityType, 'account');
-    assert.equal(s.body.identityId, userId);
-    assert.equal(s.body.name, 'Hesap Test');
-    const rooms = await (await a.request('/api/rooms')).json();
-    assert.equal(rooms.rooms.length, 0, 'guest rooms are not silently merged into the account');
+    // A raw Auth.js JWT with no sestiaSid at all — the exact "legacy JWT"
+    // shape Session V2 must reject rather than trust or fall back from.
+    const legacyToken = await encode({ token: { sub: userId, id: userId, email: `${userId}@example.test` }, secret: AUTH_SECRET, salt: 'authjs.session-token' });
+    a.jar.set('authjs.session-token', legacyToken);
+    const legacy = await state(a);
+    assert.equal(legacy.status, 401, 'an Auth.js JWT without a bound Session V2 sid must require fresh authentication');
+    assert.equal(legacy.body.error, 'session_required');
+    assert.notEqual(legacy.body.identityType, 'guest', 'must never silently fall back to a leftover guest identity either');
     a.jar.delete('authjs.session-token');
-    assert.equal((await state(a)).body.identityType, 'guest', 'guest identity is intact after the account signs out');
+    assert.equal((await state(a)).body.identityType, 'guest', 'guest identity is intact and unaffected');
   });
 
   await check('named email/account: onboarding "Ayşe" becomes the account name', async () => {
@@ -200,6 +273,20 @@ async function check(name, fn) {
     assert.equal(account.name, null);
   });
 
+  await check('same account reauthenticating gets a NEW Session V2 session but the SAME auth_user.id and durable data', async () => {
+    const f = browser();
+    await arrive(f);
+    const first = await signUpWithCode(f, 'reauth@example.test', 'Tekrar');
+    await createRoom(f, 'Kalıcı Oda');
+    // Simulate a fresh browser/session for the exact same email.
+    const g = browser();
+    await arrive(g);
+    const second = await signUpWithCode(g, 'reauth@example.test', '');
+    assert.equal(second.identityId, first.identityId, 'same auth_user.id, not a new account');
+    const rooms = await (await g.request('/api/rooms')).json();
+    assert.ok(rooms.rooms.some((r) => r.name === 'Kalıcı Oda'), 'durable account data is regained after reauthentication');
+  });
+
   // Landing rule source of truth (lib/db.js hasStartedRealWork via /api/state):
   // same fields for guests and accounts; one room is real work.
   await check('real-work signal: fresh guest/account none, a room makes it real work', async () => {
@@ -218,8 +305,9 @@ async function check(name, fn) {
   });
 
   // Existing room photos -> room analysis reads photo bytes back through this
-  // route; it must serve the owner (guest or account) and nobody else.
-  await check('existing room photo bytes: owner guest/account only, no new photo row on read', async () => {
+  // route; it must serve the owner (guest or account) and nobody else, and
+  // must never be cacheable across an identity transition.
+  await check('existing room photo bytes: owner guest/account only, no-store, no new photo row on read', async () => {
     const upload = async (who, roomId, text) => {
       const fd = new FormData();
       fd.append('photo', new Blob([text], { type: 'image/jpeg' }), 'photo.jpg');
@@ -230,7 +318,7 @@ async function check(name, fn) {
     };
     const read = async (who, roomId, photoId) => {
       const res = await who.request(`/api/rooms/${roomId}/photos/${photoId}`);
-      return { status: res.status, text: res.status === 200 ? await res.text() : null };
+      return { status: res.status, text: res.status === 200 ? await res.text() : null, cacheControl: res.headers.get('cache-control') };
     };
     const g = browser();
     await arrive(g);
@@ -241,8 +329,10 @@ async function check(name, fn) {
     await signUpWithCode(acct, 'photos@example.test', 'Foto');
     const acctRoom = await createRoom(acct, 'Account Salon');
     const acctPhoto = await upload(acct, acctRoom.id, 'account-bytes');
-    assert.deepEqual(await read(g, guestRoom.id, guestPhoto), { status: 200, text: 'guest-bytes' });
-    assert.deepEqual(await read(acct, acctRoom.id, acctPhoto), { status: 200, text: 'account-bytes' });
+    const ownRead = await read(g, guestRoom.id, guestPhoto);
+    assert.deepEqual({ status: ownRead.status, text: ownRead.text }, { status: 200, text: 'guest-bytes' });
+    assert.equal(ownRead.cacheControl, 'private, no-store', 'private media must never be cached across an identity transition');
+    assert.deepEqual((({ status, text }) => ({ status, text }))(await read(acct, acctRoom.id, acctPhoto)), { status: 200, text: 'account-bytes' });
     assert.equal((await read(acct, guestRoom.id, guestPhoto)).status, 404, 'account cannot read a guest photo');
     assert.equal((await read(g, acctRoom.id, acctPhoto)).status, 404, 'guest cannot read an account photo');
     assert.equal((await read(b, guestRoom.id, guestPhoto)).status, 404, 'another guest cannot read it');
@@ -250,119 +340,94 @@ async function check(name, fn) {
     assert.deepEqual(detail.photos.map((p) => p.id), [guestPhoto], 'reading bytes creates no photo row');
   });
 
-  // --- Guest session 1-hour inactivity timeout (rolling renewal) ---
+  // --- Session V2: true-inactivity timeout, simulated via direct DB access
+  // (exact boundary math is already proven deterministically in
+  // tests/session-store.test.cjs; this proves the real routes/ownership
+  // react correctly once a session is genuinely expired). ---
 
-  await check('rolling renewal: activity just before the boundary keeps the same identity and pushes expiry back out to ~1h', async () => {
+  await check('inactivity timeout: old guest is never resumed, a new disjoint identity is issued, old data is kept but hidden', async () => {
     const f = browser();
-    await arrive(f);
-    const guestId = f.jar.get('guest_session').split('.')[0];
-    // Simulate "renewed a while ago, 1 minute of validity left" without waiting.
-    f.jar.set('guest_session', signGuestToken(guestId, Date.now() + 60 * 1000));
-    const s = await state(f);
-    assert.equal(s.status, 200);
-    assert.equal(s.body.identityId, guestId, 'still the same guest while inside the window');
-    const renewedExpiry = guestTokenExpiry(f.jar.get('guest_session'));
-    assert.ok(renewedExpiry > Date.now() + 55 * 60 * 1000, 'the response must push expiry back out to ~1h, not leave the short one in place');
-  });
-
-  await check('inactivity beyond 1h: old guest is never resumed, a new disjoint identity is issued, old data is kept but hidden', async () => {
-    const f = browser();
-    await arrive(f);
-    const oldGuestId = f.jar.get('guest_session').split('.')[0];
+    const est = await arrive(f);
     const room = await createRoom(f, 'Eski misafir odasi');
     const oldAccessOk = f.jar.get('access_ok');
-    // Simulate ">1h of inactivity" without waiting: a correctly-signed but
-    // already-expired token for the SAME guest.
-    f.jar.set('guest_session', signGuestToken(oldGuestId, Date.now() - 1000));
-    const page = await f.request('/');
-    assert.equal(page.status, 200, 'access-code authorization alone still lets the request into the app');
-    assert.equal(f.jar.get('access_ok'), oldAccessOk, 'access_ok is untouched by guest expiry (independent mechanism)');
+    expireSession(est.sessionId);
+    const afterExpiry = await state(f);
+    assert.equal(afterExpiry.status, 401, 'the expired session is rejected outright, never silently treated as active');
+    assert.equal(afterExpiry.body.error, 'session_required');
+    // Explicit re-establishment, exactly like a real "Misafir olarak devam
+    // et" click after the app shows guest entry again — access_ok is still
+    // valid, so this does NOT resubmit the access code.
+    const reEst = await establishGuestOnly(f);
+    assert.notEqual(reEst.ownerId, est.ownerId, 'a NEW disjoint guest id is issued; the old one is never resumed');
     const after = await state(f);
-    assert.equal(after.status, 200);
-    assert.notEqual(after.body.identityId, oldGuestId, 'a NEW guest id is issued; the old one is never resumed');
     assert.equal(after.body.hasStartedWork, false, 'the new identity owns nothing (lands on Keşif, not Ana Sayfa)');
     const list = await (await f.request('/api/rooms')).json();
     assert.equal(list.rooms.some((r) => r.id === room.id), false, "the new guest cannot see the old guest's room");
     assert.equal((await f.request(`/api/rooms/${room.id}`)).status, 404, 'old room is not reachable by id either, from the new identity');
-    // Expiry must not delete data — the row still exists, still owned by the
-    // old (now-unreachable) guest id, never reassigned to the new one.
-    const Database = require('better-sqlite3');
-    const db = new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
-    const row = db.prepare('SELECT device_id FROM rooms WHERE id = ?').get(room.id);
-    db.close();
+    // Expiry must not delete data.
+    const db2 = dbConn();
+    const row = db2.prepare('SELECT device_id FROM rooms WHERE id = ?').get(room.id);
+    db2.close();
     assert.ok(row, 'the old room row must still exist in the database (no deletion on expiry)');
-    assert.equal(row.device_id, oldGuestId, 'still owned by the old guest id, never reassigned to the new one');
+    assert.equal(row.device_id, est.ownerId, 'still owned by the old guest id, never reassigned to the new one');
+    assert.equal(f.jar.get('access_ok'), oldAccessOk, 'access_ok is untouched by session expiry (independent mechanism)');
   });
 
-  await check('same-request cookie propagation: an expired cookie sent straight to an API route is never treated as an active identity in that same response', async () => {
+  await check('static assets and health checks never touch/renew any session cookie', async () => {
     const f = browser();
     await arrive(f);
-    const oldGuestId = f.jar.get('guest_session').split('.')[0];
-    await createRoom(f, 'Az once aktifti');
-    f.jar.set('guest_session', signGuestToken(oldGuestId, Date.now() - 1000));
-    // No intervening page load — the very first post-expiry request goes
-    // straight to an API route, like a message sent from an already-open tab.
-    const res = await f.request('/api/rooms');
-    if (res.status === 401) {
-      results.push("INFO same-request propagation: proxy's renewed Set-Cookie does not reach getIdentity() within the same request -> clean 401 (matches Next.js docs: a response's Set-Cookie is not forwarded into the downstream request's Cookie header for that same request)");
-    } else {
-      assert.equal(res.status, 200);
-      const body = await res.json();
-      assert.equal(body.rooms.length, 0, "if accepted in the same request, it must be as a brand-new, empty-owning guest, never the old identity's data");
-      results.push('INFO same-request propagation: the request was accepted as a fresh, disjoint, empty-owning guest (also safe: no old-identity data was reachable)');
-    }
-    assert.ok(f.jar.get('guest_session'), 'a cookie (renewed or freshly minted) is present in the response either way');
-    assert.notEqual(f.jar.get('guest_session').split('.')[0], oldGuestId, 'whichever outcome occurred, it is never the expired identity');
-  });
-
-  await check('static assets and health checks never renew or reissue the guest cookie', async () => {
-    const f = browser();
-    await arrive(f);
-    const before = f.jar.get('guest_session');
+    const beforeGuest = f.jar.get(credentials.GUEST_COOKIE);
+    const beforeScope = f.jar.get(credentials.SCOPE_COOKIE);
     const health = await f.request('/api/health');
     assert.equal(health.status, 200);
-    assert.equal(health.headers.getSetCookie().some((c) => c.startsWith('guest_session=')), false, '/api/health must not renew the guest cookie');
+    assert.equal(health.headers.getSetCookie().length, 0, '/api/health must not touch any cookie');
     const favicon = await f.request('/favicon.ico');
-    assert.equal(favicon.headers.getSetCookie().some((c) => c.startsWith('guest_session=')), false, 'a static-asset path (excluded by proxy.js\'s matcher) must not renew the guest cookie');
-    assert.equal(f.jar.get('guest_session'), before, 'guest identity/expiry unchanged by non-qualifying traffic');
+    assert.equal(favicon.headers.getSetCookie().length, 0, 'a static-asset path (excluded by proxy.js\'s matcher) must not touch any cookie');
+    assert.equal(f.jar.get(credentials.GUEST_COOKIE), beforeGuest);
+    assert.equal(f.jar.get(credentials.SCOPE_COOKIE), beforeScope);
   });
 
-  await check('account session is unaffected even when the guest cookie is simultaneously expired', async () => {
+  await check('account session is unaffected by a concurrently-expired guest session in the same family', async () => {
     const g = browser();
     await arrive(g);
     const { encode } = await import(require('node:url').pathToFileURL(path.join(root, 'node_modules/next-auth/jwt.js')).href);
-    const userId = `e2e-account-guestexp-${crypto.randomUUID()}`;
-    const Database = require('better-sqlite3');
-    const db = new Database(path.join(directory, 'data', 'app.db'), { timeout: 10000 });
-    db.prepare('INSERT INTO auth_user (id, name, email) VALUES (?, ?, ?)').run(userId, 'Hesap Test 2', `${userId}@example.test`);
-    db.close();
-    const token = await encode({ token: { sub: userId, id: userId, email: `${userId}@example.test` }, secret: AUTH_SECRET, salt: 'authjs.session-token' });
-    g.jar.set('authjs.session-token', token);
-    const oldGuestId = g.jar.get('guest_session').split('.')[0];
-    g.jar.set('guest_session', signGuestToken(oldGuestId, Date.now() - 1000));
+    const intentRes = await g.request('/api/session/login-intent', { method: 'POST' });
+    assert.equal(intentRes.status, 200);
+    // Bind a real account session the same way the app does, then also force
+    // the (now-superseded) guest row into an expired state to prove the two
+    // are resolved completely independently.
+    const account = await signUpWithCode(g, 'guestexp@example.test', 'Hesap Test 2');
     const s = await state(g);
     assert.equal(s.status, 200);
     assert.equal(s.body.identityType, 'account');
-    assert.equal(s.body.identityId, userId, 'account identity resolves correctly regardless of guest cookie expiry');
+    assert.equal(s.body.identityId, account.identityId);
   });
 
   await check("expired guest cannot continue old chat-attachment ownership; a fresh guest's own attachment stays private", async () => {
     const f = browser();
-    await arrive(f);
-    const oldGuestId = f.jar.get('guest_session').split('.')[0];
+    const est = await arrive(f);
     const fd = new FormData();
     fd.append('photo', new Blob(['old-guest-bytes'], { type: 'image/jpeg' }), 'photo.jpg');
     const uploadRes = await f.request('/api/chat/attachments', { method: 'POST', body: fd });
     assert.equal(uploadRes.status, 200);
     const attachmentId = (await uploadRes.json()).id;
-    f.jar.set('guest_session', signGuestToken(oldGuestId, Date.now() - 1000));
+    const readOwn = await f.request(`/api/chat/attachments/${attachmentId}`);
+    assert.equal(readOwn.headers.get('cache-control'), 'private, no-store');
+    expireSession(est.sessionId);
     const afterExpiry = await f.request(`/api/chat/attachments/${attachmentId}`);
-    // Per the confirmed same-request propagation behavior, the very first
-    // request after expiry sees no valid identity at all (401). Either way
-    // the old bytes must never be served.
-    assert.ok([401, 404].includes(afterExpiry.status), `expected 401 or 404, got ${afterExpiry.status}`);
+    assert.equal(afterExpiry.status, 401, 'the expired session cannot read its own old attachment either');
+    await establishGuestOnly(f);
     const secondTry = await f.request(`/api/chat/attachments/${attachmentId}`);
-    assert.equal(secondTry.status, 404, "the new identity (now established) cannot read the old identity's chat attachment bytes");
+    assert.equal(secondTry.status, 404, "the new identity cannot read the old identity's chat attachment bytes");
+  });
+
+  await check('cross-origin POSTs to session-mutation routes are rejected', async () => {
+    const f = browser();
+    await arrive(f);
+    const res = await f.request('/api/session/activity', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' },
+      body: JSON.stringify({ event: 'click', eventAt: Date.now() }) });
+    assert.equal(res.status, 403);
   });
 
   console.log(results.join('\n'));

@@ -1,4 +1,4 @@
-import { getActiveDeviceCount, getDailyUsage, getRecentFeedback, getRecentErrors, getTesterAccounts } from '@/lib/db';
+import { getActiveDeviceCount, getDailyUsage, getRecentFeedback, getRecentErrors, getTesterAccounts, getSessionObservability } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,12 +52,23 @@ function RecordTable({ rows, columns }) {
   );
 }
 
-export default function AdminPage() {
+const SESSION_FILTERS = [
+  { key: 'all', label: 'Tümü' },
+  { key: 'guest', label: 'Misafir' },
+  { key: 'account', label: 'Hesap' },
+  { key: 'external', label: 'Dış / Sınıflandırılmamış' },
+  { key: 'internal', label: 'İç / Test' },
+];
+
+export default async function AdminPage({ searchParams }) {
   const activeDevices = getActiveDeviceCount(7);
   const daily = getDailyUsage(7);
   const feedback = getRecentFeedback(50);
   const errors = getRecentErrors(50);
   const testers = getTesterAccounts();
+  const { filter: rawFilter } = (await searchParams) || {};
+  const filter = SESSION_FILTERS.some((f) => f.key === rawFilter) ? rawFilter : 'all';
+  const sessions = getSessionObservability({ filter, limit: 100 });
 
   return (
     <div className="sestia-admin"><div className="sestia-wordmark">SESTIA</div>
@@ -86,6 +97,59 @@ export default function AdminPage() {
             { key: 'decisions', label: 'Karar' },
             { key: 'rooms', label: 'Oda' },
             { key: 'feedback', label: 'Geri bildirim' },
+          ]}
+        />
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 4 }}>
+          Oturumlar / Ziyaretler ({sessions.length})
+        </div>
+        <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 12 }}>
+          Bunlar oturum sayılarıdır, gerçek kişi sayısı değildir — aynı kişi farklı tarayıcı/cihaz/misafir
+          kimliğiyle birden çok oturum oluşturabilir. Konum, IP&apos;den türetilen kaba bir tahmindir.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {SESSION_FILTERS.map((f) => (
+            <a key={f.key} href={`/admin?filter=${f.key}`}
+              className={filter === f.key ? 'btn-primary' : 'btn-outline'}
+              style={{ padding: '6px 14px', fontSize: 13, textDecoration: 'none', borderRadius: 999 }}>
+              {f.label}
+            </a>
+          ))}
+        </div>
+        <RecordTable
+          rows={sessions}
+          columns={[
+            { key: 'createdAt', label: 'İlk görülme' },
+            { key: 'kind', label: 'Tür', render: (v) => (v === 'account' ? 'Hesap' : 'Misafir') },
+            { key: 'accountEmail', label: 'E-posta', render: (v, row) => v || row.subjectId },
+            { key: 'sessionId', label: 'Oturum' },
+            { key: 'location', label: 'Tahmini konum' },
+            { key: 'device', label: 'Cihaz' },
+            { key: 'os', label: 'İşletim sistemi' },
+            { key: 'browser', label: 'Tarayıcı' },
+            { key: 'entryPath', label: 'Giriş / Kaynak', render: (v, row) => v || row.referrerHost || '—' },
+            { key: 'lastActivity', label: 'Son etkinlik' },
+            { key: 'status', label: 'Durum' },
+            { key: 'rooms', label: 'Oda' },
+            { key: 'decisions', label: 'Karar' },
+            { key: 'chats', label: 'Sohbet' },
+            { key: 'toparla', label: 'Toparla' },
+            { key: 'feedback', label: 'Geri bildirim' },
+            {
+              key: 'internalTest', label: 'İç / Test',
+              render: (v, row) => (
+                <form action="/api/admin/session-internal-test" method="POST" style={{ margin: 0 }}>
+                  <input type="hidden" name="sessionId" value={row.sessionIdFull} />
+                  <input type="hidden" name="filter" value={filter} />
+                  <input type="hidden" name="value" value={v ? '0' : '1'} />
+                  <button type="submit" className={v ? 'btn-primary' : 'btn-outline'} style={{ padding: '4px 10px', fontSize: 12 }}>
+                    {v ? 'İç/Test' : 'Dış'}
+                  </button>
+                </form>
+              ),
+            },
           ]}
         />
       </section>
