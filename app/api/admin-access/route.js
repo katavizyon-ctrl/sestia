@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
 import accessTokens from '@/lib/accessToken.cjs';
 import attemptLimiter from '@/lib/attemptLimiter.cjs';
+import adminAccess from '@/lib/adminAccess.cjs';
 
 export const runtime = 'nodejs';
 
 const limiter = attemptLimiter.createAttemptLimiter({ maxPerClient: 5, maxGlobal: 30 });
 
 export async function POST(req) {
+  // In owner mode the shared code opens nothing; refuse before touching it.
+  if (adminAccess.ownerMode()) {
+    return NextResponse.json({ error: 'owner_account_required' }, { status: 403 });
+  }
   const body = await req.json().catch(() => ({}));
   const code = (body.code || '').toString();
   const expected = process.env.ADMIN_ACCESS_CODE;

@@ -1,195 +1,80 @@
-import { getActiveDeviceCount, getDailyUsage, getRecentFeedback, getRecentErrors, getTesterAccounts, getSessionObservability } from '@/lib/db';
+import { adminActivity } from '@/lib/adminData';
+import { requireAdmin } from '@/lib/adminGuard';
+import adminActivityModule from '@/lib/adminActivity.cjs';
+import { AdminShell, Section, Stat, StatRow, RecordTable, DailyBarChart, REC_LABELS, formatIstanbul, scanBreakdown } from './_ui';
 
 export const dynamic = 'force-dynamic';
 
-function DailyBarChart({ daily }) {
-  const maxCount = Math.max(1, ...daily.map((d) => d.count));
-  if (daily.length === 0) return <div className="muted">Henüz veri yok.</div>;
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 160 }}>
-      {daily.map((d) => (
-        <div key={d.day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-          <div style={{ fontSize: 12, fontWeight: 600 }}>{d.count}</div>
-          <div
-            style={{
-              width: '100%',
-              maxWidth: 40,
-              background: 'var(--teal)',
-              borderRadius: 6,
-              height: `${Math.max(4, (d.count / maxCount) * 110)}px`,
-            }}
-          />
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{d.day.slice(5)}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RecordTable({ rows, columns }) {
-  if (rows.length === 0) return <div className="muted">Henüz kayıt yok.</div>;
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table className="admin-table">
-        <thead>
-          <tr>
-            {columns.map((col) => (
-              <th key={col.key}>{col.label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>
-              {columns.map((col) => (
-                <td key={col.key}>{col.render ? col.render(row[col.key], row) : row[col.key]}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-const SESSION_FILTERS = [
-  { key: 'all', label: 'Tümü' },
-  { key: 'guest', label: 'Misafir' },
-  { key: 'account', label: 'Hesap' },
-  { key: 'external', label: 'Dış / Sınıflandırılmamış' },
-  { key: 'internal', label: 'İç / Test' },
-];
-
 export default async function AdminPage({ searchParams }) {
-  const activeDevices = getActiveDeviceCount(7);
-  const daily = getDailyUsage(7);
-  const feedback = getRecentFeedback(50);
-  const errors = getRecentErrors(50);
-  const testers = getTesterAccounts();
-  const { filter: rawFilter } = (await searchParams) || {};
-  const filter = SESSION_FILTERS.some((f) => f.key === rawFilter) ? rawFilter : 'all';
-  const sessions = getSessionObservability({ filter, limit: 100 });
+  const access = await requireAdmin('/admin');
+  const testMode = adminActivityModule.parseTestMode((await searchParams)?.test);
+  const o = adminActivity.overview({ testMode, days: 7 });
+  const feedback = adminActivity.recentFeedback({ limit: 50, testMode });
+  const errors = adminActivity.recentErrors({ limit: 50, testMode });
+  const owner = access.mode === 'owner';
 
   return (
-    <div className="sestia-admin"><div className="sestia-wordmark">SESTIA</div>
-      <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600 }}>Sahibi Paneli</h1>
+    <AdminShell title="Sahibi Paneli" active="overview" testMode={testMode} testModePath="/admin" access={access}>
+      <Section title="Son 7 gün"
+        note="Hesaplar ve misafir oturumları ayrı sayılır: bir misafir oturumu bir kişi değildir, aynı kişi birçok misafir oturumu açabilir. Bir hesabın her oturumu bir e-posta kodu girişidir.">
+        <StatRow>
+          <Stat label="Aktif hesaplar" value={o.activeAccounts} hint="Son 7 günde etkileşimi olan hesap" />
+          <Stat label="Hesap girişleri" value={o.accountLogins} hint="Session V2 hesap oturumu" />
+          <Stat label="Misafir oturumları" value={o.guestSessions} />
+          <Stat label="Anlamlı etkinliği olan misafir oturumları" value={o.meaningfulGuestSessions}
+            hint="Oda, fotoğraf, analiz, karar, sohbet, Toparla veya geri bildirim" />
+          <Stat label="Misafirden hesaba geçiş" value={o.conversions} hint="Aynı tarayıcıda, misafir oturumundan hemen sonra" />
+        </StatRow>
+      </Section>
 
-      <section style={{ marginTop: 28 }}>
-        <div className="label" style={{ color: 'var(--text-muted)' }}>Aktif Cihaz (son 7 gün)</div>
-        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 40, fontWeight: 700 }}>{activeDevices}</div>
-      </section>
+      <Section title="Ürün kullanımı (tüm zamanlar)"
+        note={o.preSessionV2Owners
+          ? `Session V2 öncesinden oturum kaydı olmayan ${o.preSessionV2Owners} eski misafir kimliğinin kayıtları da dahildir; bunlar İç/Test olarak işaretlenemez.`
+          : null}>
+        <StatRow>
+          <Stat label="Oda" value={o.totals.rooms} />
+          <Stat label="Oda fotoğrafı" value={o.totals.roomPhotos} />
+          <Stat label="Oda taraması" value={o.totals.roomScans.total} hint={scanBreakdown(o.totals.roomScans)} />
+          <Stat label="Karar" value={o.totals.decisions.total} />
+          <Stat label="Sohbet turu" value={o.totals.chatTurns} hint="Serbest Sestia sohbeti" />
+          <Stat label="Toparla" value={o.totals.toparla.total} hint={`tamamlanan ${o.totals.toparla.completed} · başarısız ${o.totals.toparla.failed}`} />
+          <Stat label="Geri bildirim" value={o.totals.feedback} />
+          <Stat label="Tek eşya analizi (yaklaşık)" value={o.totals.singleAnalysesApprox}
+            hint="Eski istemci ölçümü; tek eşya sohbet turlarını da sayar" />
+        </StatRow>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 16, fontSize: 14 }}>
+          {Object.entries(REC_LABELS).map(([k, label]) => <span key={k}><strong>{label}</strong> {o.totals.decisions[k]}</span>)}
+        </div>
+      </Section>
 
-      <section style={{ marginTop: 32 }}>
-        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-          Test Kullanıcıları ({testers.length})
-        </div>
-        <RecordTable
-          rows={testers}
-          columns={[
-            { key: 'email', label: 'E-posta' },
-            { key: 'name', label: 'Hitap', render: (v) => v || '—' },
-            { key: 'first_seen', label: 'İlk kullanım', render: (v) => v || 'Henüz girmedi' },
-            { key: 'last_sign_in_ms', label: 'Son giriş', render: (v) => (v ? new Date(v).toISOString().slice(0, 16).replace('T', ' ') : '—') },
-            { key: 'last_activity', label: 'Son etkinlik', render: (v) => v || '—' },
-            { key: 'sessions', label: 'Oturum' },
-            { key: 'analyses', label: 'Analiz' },
-            { key: 'chats', label: 'Sohbet mesajı' },
-            { key: 'decisions', label: 'Karar' },
-            { key: 'rooms', label: 'Oda' },
-            { key: 'feedback', label: 'Geri bildirim' },
-          ]}
-        />
-      </section>
+      <Section title="Günlük karar sayısı (son 7 gün, İstanbul günü)">
+        <DailyBarChart daily={o.dailyDecisions} />
+      </Section>
 
-      <section style={{ marginTop: 32 }}>
-        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 4 }}>
-          Oturumlar / Ziyaretler ({sessions.length})
-        </div>
-        <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 12 }}>
-          Bunlar oturum sayılarıdır, gerçek kişi sayısı değildir — aynı kişi farklı tarayıcı/cihaz/misafir
-          kimliğiyle birden çok oturum oluşturabilir. Konum, IP&apos;den türetilen kaba bir tahmindir.
-        </p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-          {SESSION_FILTERS.map((f) => (
-            <a key={f.key} href={`/admin?filter=${f.key}`}
-              className={filter === f.key ? 'btn-primary' : 'btn-outline'}
-              style={{ padding: '6px 14px', fontSize: 13, textDecoration: 'none', borderRadius: 999 }}>
-              {f.label}
-            </a>
-          ))}
-        </div>
-        <RecordTable
-          rows={sessions}
-          columns={[
-            { key: 'createdAt', label: 'İlk görülme' },
-            { key: 'kind', label: 'Tür', render: (v) => (v === 'account' ? 'Hesap' : 'Misafir') },
-            { key: 'accountEmail', label: 'E-posta', render: (v, row) => v || row.subjectId },
-            { key: 'sessionId', label: 'Oturum' },
-            { key: 'location', label: 'Tahmini konum' },
-            { key: 'device', label: 'Cihaz' },
-            { key: 'os', label: 'İşletim sistemi' },
-            { key: 'browser', label: 'Tarayıcı' },
-            { key: 'entryPath', label: 'Giriş / Kaynak', render: (v, row) => v || row.referrerHost || '—' },
-            { key: 'lastActivity', label: 'Son etkinlik' },
-            { key: 'status', label: 'Durum' },
-            { key: 'rooms', label: 'Oda' },
-            { key: 'decisions', label: 'Karar' },
-            { key: 'chats', label: 'Sohbet' },
-            { key: 'toparla', label: 'Toparla' },
-            { key: 'feedback', label: 'Geri bildirim' },
-            {
-              key: 'internalTest', label: 'İç / Test',
-              render: (v, row) => (
-                <form action="/api/admin/session-internal-test" method="POST" style={{ margin: 0 }}>
-                  <input type="hidden" name="sessionId" value={row.sessionIdFull} />
-                  <input type="hidden" name="filter" value={filter} />
-                  <input type="hidden" name="value" value={v ? '0' : '1'} />
-                  <button type="submit" className={v ? 'btn-primary' : 'btn-outline'} style={{ padding: '4px 10px', fontSize: 12 }}>
-                    {v ? 'İç/Test' : 'Dış'}
-                  </button>
-                </form>
-              ),
-            },
-          ]}
-        />
-      </section>
-
-      <section style={{ marginTop: 32 }}>
-        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-          Günlük Karar Sayısı (son 7 gün)
-        </div>
-        <DailyBarChart daily={daily} />
-      </section>
-
-      <section style={{ marginTop: 40 }}>
-        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-          Geri Bildirimler (son {feedback.length})
-        </div>
+      <Section title={`Geri bildirimler (son ${feedback.length})`}>
         <RecordTable
           rows={feedback}
           columns={[
-            { key: 'created_at', label: 'Tarih' },
-            { key: 'device_id', label: 'Kim', render: (v, row) => row.email || (v ? v.slice(0, 8) : '—') },
+            { key: 'at', label: 'Tarih', render: (v) => formatIstanbul(v) },
+            { key: 'maskedEmail', label: 'Kim', render: (v, row) => (v && owner && row.accountId
+              ? <a href={`/admin/hesaplar/${row.accountId}`}>{v}</a> : v || row.ownerShort || '—') },
             { key: 'screen', label: 'Ekran' },
             { key: 'message', label: 'Mesaj' },
           ]}
         />
-      </section>
+      </Section>
 
-      <section style={{ marginTop: 40 }}>
-        <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-          Hatalar (son {errors.length})
-        </div>
+      <Section title={`Hatalar (son ${errors.length})`} note="İstemci tarafı hatalar; yığın izi gösterilmez. Sunucu hataları yalnızca Railway günlüklerindedir.">
         <RecordTable
           rows={errors}
           columns={[
-            { key: 'created_at', label: 'Tarih' },
-            { key: 'device_id', label: 'Kim', render: (v, row) => row.email || (v ? v.slice(0, 8) : '—') },
+            { key: 'at', label: 'Tarih', render: (v) => formatIstanbul(v) },
+            { key: 'maskedEmail', label: 'Kim', render: (v, row) => v || row.ownerShort || '—' },
             { key: 'screen', label: 'Ekran' },
             { key: 'message', label: 'Mesaj' },
           ]}
         />
-      </section>
-    </div>
+      </Section>
+    </AdminShell>
   );
 }

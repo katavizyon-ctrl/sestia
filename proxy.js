@@ -7,6 +7,7 @@ import privateAccess from '@/lib/privateAccess.cjs';
 import attemptLimiter from '@/lib/attemptLimiter.cjs';
 import { sessions } from '@/lib/db';
 import credentials from '@/lib/sessionCredentials.cjs';
+import adminAccess from '@/lib/adminAccess.cjs';
 
 const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/health', '/giris-hatasi'];
 
@@ -40,6 +41,23 @@ function ensureFamilyCookie(req, res) {
   const family = sessions.bootstrap();
   res.cookies.set(credentials.SCOPE_COOKIE, credentials.sign('scope', family.id, process.env.AUTH_SECRET), cookieOpts);
   return family.id;
+}
+
+// Owner-mode admin gate (lib/adminAccess.cjs): the configured owner's
+// verified Auth.js JWT AND its bound Session V2 account session must be
+// active — the same check the private-owner branch below uses. Reads the
+// existing scope cookie only; never mints one for an admin request.
+async function ownerAdminSessionOk(req) {
+  try {
+    const token = await getToken({ req, secret: process.env.AUTH_SECRET,
+      secureCookie: process.env.NODE_ENV === 'production' });
+    const raw = req.cookies.get(credentials.SCOPE_COOKIE)?.value;
+    const familyId = raw && credentials.verify('scope', raw, process.env.AUTH_SECRET);
+    return Boolean(token?.sub && token?.sestiaSid && familyId && adminAccess.isOwnerEmail(token.email)
+      && sessions.check(token.sestiaSid, familyId).state === 'active');
+  } catch {
+    return false; // e.g. session policy unconfigured: fail closed
+  }
 }
 
 // Hygiene only: lib/session.js never reads this legacy cookie for
@@ -101,8 +119,12 @@ export async function proxy(req) {
   // giris tamamlanamaz.
   if (pathname.startsWith('/api/auth/')) return NextResponse.next();
 
-  if (pathname === '/admin' || pathname.startsWith('/api/admin')) {
-    const adminOk = accessTokens.verifyAccessToken(req.cookies.get('admin_ok')?.value, 'admin');
+  // '/admin/' covers the per-account pages; without it they would fall
+  // through to the ordinary app access check below.
+  if (pathname === '/admin' || pathname.startsWith('/admin/') || pathname.startsWith('/api/admin')) {
+    const adminOk = adminAccess.ownerMode()
+      ? await ownerAdminSessionOk(req)
+      : accessTokens.verifyAccessToken(req.cookies.get('admin_ok')?.value, 'admin');
     if (!adminOk) {
       if (pathname.startsWith('/api/admin')) {
         return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

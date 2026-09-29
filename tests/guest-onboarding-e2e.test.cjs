@@ -30,6 +30,8 @@ for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TEMP',
 Object.assign(env, { NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1', AUTH_SECRET, ACCESS_CODE: 'e2e',
   ADMIN_ACCESS_CODE: 'e2e-admin', ANTHROPIC_API_KEY: 'isolated-no-real-key', EMAIL_LOGIN_REQUIRED: '1',
   SESTIA_SESSION_POLICY: 'staging-idle-v2',
+  // Owner-mode admin gate (lib/adminAccess.cjs); only the admin check below uses it.
+  ADMIN_OWNER_EMAIL: 'owner@example.test',
   // Placeholder values so the Resend provider is configured; the tests never
   // request an email, they insert the code into the isolated database instead.
   RESEND_API_KEY: 're_isolated_not_a_real_key', AUTH_EMAIL_FROM: 'SESTIA E2E <e2e@example.test>' });
@@ -459,6 +461,62 @@ async function check(name, fn) {
       headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' },
       body: JSON.stringify({ event: 'click', eventAt: Date.now() }) });
     assert.equal(res.status, 403);
+  });
+
+  await check('admin: owner account + active Session V2 session opens /admin; shared code, other accounts and sub-routes stay closed', async () => {
+    const toLogin = (res) => [307, 308].includes(res.status) && new URL(res.headers.get('location'), BASE).pathname === '/admin-giris';
+    const adminPaths = ['/admin', '/admin/hesaplar', '/admin/oturumlar', '/admin/hesaplar/anything'];
+
+    const guest = browser();
+    await arrive(guest); // holds access_ok: the app gate must not open admin sub-routes
+    for (const p of adminPaths) assert.ok(toLogin(await guest.request(p)), `${p} is gated for a guest`);
+    const code = await guest.request('/api/admin-access', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'e2e-admin' }) });
+    assert.equal(code.status, 403, 'the shared admin code is refused in owner mode');
+    assert.equal(guest.jar.get('admin_ok'), undefined);
+
+    const other = browser();
+    await arrive(other);
+    await signUpWithCode(other, 'someone@example.test', 'Başkası');
+    assert.ok(toLogin(await other.request('/admin/hesaplar')), 'a non-owner account is refused');
+
+    const owner = browser();
+    await arrive(owner);
+    const ownerState = await signUpWithCode(owner, 'owner@example.test', 'Sahip');
+    await createRoom(owner, 'Sahip Salonu');
+    for (const p of ['/admin', '/admin/hesaplar', '/admin/oturumlar']) assert.equal((await owner.request(p)).status, 200, `${p} opens for the owner`);
+    const list = await (await owner.request('/admin/hesaplar')).text();
+    assert.ok(list.includes('o***@example.test'), 'list shows the masked email');
+    assert.ok(!list.includes('someone@example.test') && !list.includes('owner@example.test'), 'list never renders a full email');
+    const detailRes = await owner.request(`/admin/hesaplar/${ownerState.identityId}`);
+    assert.equal(detailRes.status, 200);
+    const detail = await detailRes.text();
+    assert.ok(detail.includes('owner@example.test'), 'detail shows the full email for support');
+    assert.ok(detail.includes('Oda oluşturuldu'), 'detail renders the derived timeline');
+    assert.equal((await owner.request('/admin/hesaplar/not-an-account')).status, 404);
+
+    const db = dbConn();
+    const ownerSession = db.prepare("SELECT id FROM sestia_sessions WHERE kind = 'account' AND subject_id = ? ORDER BY created_at_ms DESC")
+      .get(ownerState.identityId).id;
+    db.close();
+    const toggle = (headers, returnTo) => owner.request('/api/admin/session-internal-test', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
+      body: new URLSearchParams({ sessionId: ownerSession, value: '1', returnTo }).toString() });
+    const cross = await toggle({ Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' }, '/admin/oturumlar');
+    assert.equal(cross.status, 403, 'cross-origin toggle is rejected');
+    const ok = await toggle({}, 'https://evil.example.test/steal');
+    assert.equal(ok.status, 303);
+    const back = new URL(ok.headers.get('location'), BASE);
+    // Next dev reports its own host as localhost; what matters is that the
+    // hostile target was replaced by the admin sessions page.
+    assert.ok(back.hostname !== 'evil.example.test' && back.pathname === '/admin/oturumlar',
+      `return target is confined to same-origin /admin: ${ok.headers.get('location')}`);
+    const db2 = dbConn();
+    assert.equal(db2.prepare('SELECT internal_test FROM session_visit_metadata WHERE session_id = ?').get(ownerSession).internal_test, 1);
+    db2.close();
+
+    expireSession(ownerSession, 600000);
+    assert.ok(toLogin(await owner.request('/admin/hesaplar')), 'an idle-expired owner session no longer opens admin');
   });
 
   console.log(results.join('\n'));
