@@ -32,9 +32,27 @@ Object.assign(env, { NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1', AUTH
   SESTIA_SESSION_POLICY: 'staging-idle-v2',
   // Owner-mode admin gate (lib/adminAccess.cjs); only the admin check below uses it.
   ADMIN_OWNER_EMAIL: 'owner@example.test',
-  // Placeholder values so the Resend provider is configured; the tests never
-  // request an email, they insert the code into the isolated database instead.
+  // Placeholder values so the Resend provider is configured. The user-flow
+  // tests insert codes into the isolated database; the Admin login tests let
+  // the server send, and the stub below captures that email instead.
   RESEND_API_KEY: 're_isolated_not_a_real_key', AUTH_EMAIL_FROM: 'SESTIA E2E <e2e@example.test>' });
+// Test-only preload for the isolated server: calls to api.resend.com never
+// leave the machine; each would-be email is appended to OUTBOX (JSON lines)
+// so tests can check the recipient and read the code. Nothing else changes.
+const OUTBOX = path.join(directory, 'resend-outbox.jsonl');
+const resendStub = path.join(directory, 'resend-stub.cjs');
+fs.writeFileSync(resendStub, `const fs = require('fs');
+const realFetch = globalThis.fetch;
+globalThis.fetch = async function (input, init) {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input && input.url;
+  if (typeof url === 'string' && url.startsWith('https://api.resend.com/')) {
+    fs.appendFileSync(${JSON.stringify(OUTBOX)}, String((init && init.body) || '') + '\\n');
+    return new Response(JSON.stringify({ id: 'e2e-stub' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  return realFetch(input, init);
+};
+`);
+env.NODE_OPTIONS = `--require "${resendStub.replaceAll('\\', '/')}"`;
 const child = spawn(process.execPath, [path.join(root, 'node_modules/next/dist/bin/next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', String(PORT)],
   { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
@@ -132,10 +150,29 @@ async function signUpWithCode(b, email, name) {
   return s.body;
 }
 
-// The Admin login surface: prepare via POST /api/admin-login (as
-// /admin-giris does), then the same Auth.js code callback, returning to
-// /admin. `codeEmail` lets a test verify a different address than the one
-// prepared. No access code is ever sent.
+// The Admin login surface, driven exactly like /admin-giris's two plain
+// forms: "Giriş kodu gönder" (no body — the server knows the owner) and the
+// 6-digit code. No email and no access code is ever sent by the browser.
+const OWNER = 'owner@example.test';
+function outbox() {
+  try { return fs.readFileSync(OUTBOX, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)); } catch { return []; }
+}
+function lastEmailedCode() {
+  const mail = outbox().at(-1);
+  const match = mail && /(\d{6})/.exec(mail.subject || '');
+  return { to: mail?.to, code: match ? match[1] : null };
+}
+async function adminSendCode(b, options = {}) {
+  return b.request('/api/admin-login', { method: 'POST', ...options });
+}
+async function adminSubmitCode(b, code, headers = {}) {
+  return b.request('/api/admin-login/verify', { method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams({ code }).toString() });
+}
+// Anything an Admin-login response hands the browser.
+async function exposed(res) {
+  return `${res.status} ${[...res.headers].map(([k, v]) => `${k}: ${v}`).join('\n')}\n${await res.text()}`;
+}
 async function insertCode(email) {
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   const db = dbConn();
@@ -143,13 +180,6 @@ async function insertCode(email) {
     .run(email, crypto.createHash('sha256').update(`${code}${AUTH_SECRET}`).digest('hex'), Date.now() + 15 * 60 * 1000);
   db.close();
   return code;
-}
-async function adminPrepare(b, email, headers = {}) {
-  return b.request('/api/admin-login', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ email }) });
-}
-async function adminVerify(b, email) {
-  const code = await insertCode(email);
-  return b.request(`/api/auth/callback/resend?${new URLSearchParams({ callbackUrl: '/admin', token: code, email })}`);
 }
 
 async function waitForServer() {
@@ -544,28 +574,63 @@ async function check(name, fn) {
   });
 
   const toAdminLogin = (res) => [307, 308].includes(res.status) && new URL(res.headers.get('location'), BASE).pathname === '/admin-giris';
+  const hidesOwner = (text, what) => {
+    assert.ok(!text.toLowerCase().includes(OWNER), `${what} must not contain ADMIN_OWNER_EMAIL`);
+    assert.ok(!/o\*+@|\*\*\*@example\.test/i.test(text), `${what} must not contain a masked owner email`);
+  };
 
-  await check('admin login: signed-out owner signs in directly at /admin-giris without the invite code, lands on /admin, gets no access_ok', async () => {
+  await check('admin login: /admin-giris never exposes ADMIN_OWNER_EMAIL and needs no email input', async () => {
+    const v = browser({ ip: '198.51.100.20' });
+    const html = await (await v.request('/admin-giris')).text();
+    hidesOwner(html, '/admin-giris HTML (incl. client props/JS payload)');
+    assert.ok(!/type="email"|name="email"/.test(html), 'no email field');
+    assert.ok(html.includes('action="/api/admin-login"'), 'a single send-code form');
+    const codeStep = await (await v.request('/admin-giris?adim=kod')).text();
+    hidesOwner(codeStep, '/admin-giris code step');
+    assert.ok(codeStep.includes('name="code"') && !/name="email"/.test(codeStep), 'code step asks only for the code');
+    for (const hata of ['kod', 'gonderilemedi', 'cok-fazla', '<script>x</script>']) {
+      const page = await (await v.request(`/admin-giris?hata=${encodeURIComponent(hata)}`)).text();
+      hidesOwner(page, `/admin-giris?hata=${hata}`);
+      assert.ok(!page.includes('<script>x</script>'), 'error keys are never echoed');
+    }
+  });
+
+  await check('admin login: send-code emails the configured owner server-side; the code lands on /admin without invite code or access_ok', async () => {
     const o = browser({ ip: '198.51.100.21' }); // fresh browser: never saw /hosgeldin, /giris or /api/access
     assert.ok(toAdminLogin(await o.request('/admin')));
-    const page = await o.request('/admin-giris');
-    assert.equal(page.status, 200);
-    assert.ok((await page.text()).includes('admin-login-email'), '/admin-giris offers the owner email form');
 
-    const prep = await adminPrepare(o, ' Owner@Example.test ');
-    assert.equal(prep.status, 200, `admin login prep: ${prep.status}`);
+    const before = outbox().length;
+    // An email in the request is ignored: the recipient is only ever ADMIN_OWNER_EMAIL.
+    const send = await adminSendCode(o, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'email=intruder%40example.test' });
+    const sendSeen = await exposed(send);
+    assert.equal(send.status, 303, sendSeen);
+    assert.equal(send.headers.get('location'), '/admin-giris?adim=kod');
+    hidesOwner(sendSeen, 'send-code response');
+    assert.equal(outbox().length, before + 1, 'exactly one code email was sent');
+    const mail = lastEmailedCode();
+    assert.equal(mail.to, OWNER, 'the code went to the configured owner, chosen server-side');
+    assert.ok(mail.code, 'the email carries the 6-digit code');
     assert.ok(o.jar.get(credentials.SCOPE_COOKIE) && o.jar.get(credentials.INTENT_COOKIE), 'Session V2 prerequisites were set up');
-    const done = await adminVerify(o, 'owner@example.test');
-    assert.equal(done.status, 302, `callback: ${done.status} ${done.headers.get('location')}`);
-    assert.equal(new URL(done.headers.get('location'), BASE).pathname, '/admin', 'successful verification returns to /admin');
+
+    const wrong = await adminSubmitCode(o, mail.code === '000000' ? '111111' : '000000');
+    const wrongSeen = await exposed(wrong);
+    assert.equal(wrong.status, 303);
+    assert.equal(wrong.headers.get('location'), '/admin-giris?hata=kod', 'a wrong code retries at /admin-giris');
+    hidesOwner(wrongSeen, 'wrong-code response');
+    assert.equal((await adminSubmitCode(o, '12ab')).headers.get('location'), '/admin-giris?hata=kod', 'malformed code retries at /admin-giris');
+
+    const ok = await adminSubmitCode(o, mail.code);
+    const okSeen = await exposed(ok);
+    assert.equal(ok.status, 303, okSeen);
+    assert.equal(ok.headers.get('location'), '/admin', 'successful verification lands on /admin');
+    hidesOwner(okSeen, 'verify response');
     for (const p of ['/admin', '/admin/hesaplar', '/admin/oturumlar']) assert.equal((await o.request(p)).status, 200, `${p} opens`);
     const already = await o.request('/admin-giris');
     assert.equal(new URL(already.headers.get('location') || '/', BASE).pathname, '/admin', 'a signed-in owner is sent straight to /admin');
 
     // Admin login grants no app access.
     assert.equal(o.jar.get('access_ok'), undefined, 'admin login never sets access_ok');
-    const home = await o.request('/');
-    assert.equal(new URL(home.headers.get('location') || '/', BASE).pathname, '/hosgeldin', 'the app still requires the invite code');
+    assert.equal(new URL((await o.request('/')).headers.get('location') || '/', BASE).pathname, '/hosgeldin', 'the app still requires the invite code');
     assert.equal((await o.request('/api/state')).status, 401);
     assert.equal((await o.request('/api/rooms')).status, 401);
 
@@ -577,31 +642,55 @@ async function check(name, fn) {
       body: JSON.stringify({ event: 'click', eventAt: Date.now() }) });
     assert.equal(renew.status, 200, 'real interaction in the panel renews the owner session');
 
-    // Expiry still requires a new email code; the admin surface serves it.
+    // An expired owner session must reauthenticate — through /admin-giris again.
     const db = dbConn();
-    const ownerId = db.prepare("SELECT id FROM auth_user WHERE email = 'owner@example.test'").get().id;
+    const ownerId = db.prepare('SELECT id FROM auth_user WHERE email = ?').get(OWNER).id;
     const sid = db.prepare("SELECT id FROM sestia_sessions WHERE kind = 'account' AND subject_id = ? ORDER BY created_at_ms DESC").get(ownerId).id;
     db.close();
     expireSession(sid, 600000);
     assert.ok(toAdminLogin(await o.request('/admin')), 'an expired owner session must reauthenticate');
     assert.equal((await o.request('/api/session')).status, 401, 'without an active owner session the lifecycle endpoints stay gated');
-    assert.equal((await adminPrepare(o, 'owner@example.test')).status, 200);
-    assert.equal(new URL((await adminVerify(o, 'owner@example.test')).headers.get('location'), BASE).pathname, '/admin');
+    assert.equal((await adminSendCode(o)).headers.get('location'), '/admin-giris?adim=kod');
+    assert.equal((await adminSubmitCode(o, lastEmailedCode().code)).headers.get('location'), '/admin');
     assert.equal((await o.request('/admin')).status, 200, 'reauthenticated through /admin-giris');
   });
 
-  await check('admin login: only the owner email is accepted; an admin-issued intent never binds another account; cross-origin prep refused', async () => {
-    const x = browser({ ip: '198.51.100.22' });
-    const refused = await adminPrepare(x, 'someone-else@example.test');
-    assert.equal(refused.status, 403);
-    assert.equal(x.jar.get(credentials.INTENT_COOKIE), undefined, 'no login intent for a non-owner address');
-    const cross = await adminPrepare(x, 'owner@example.test', { Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' });
-    assert.equal(cross.status, 403, 'cross-origin prep rejected');
+  await check('admin login: expired code, used/expired email link and wrong codes all retry at /admin-giris', async () => {
+    const e = browser({ ip: '198.51.100.25' });
+    assert.equal((await adminSendCode(e)).headers.get('location'), '/admin-giris?adim=kod');
+    const { code } = lastEmailedCode();
+    const db = dbConn();
+    db.prepare('UPDATE auth_verificationToken SET expires = ? WHERE identifier = ?').run(Date.now() - 1000, OWNER);
+    db.close();
+    assert.equal((await adminSubmitCode(e, code)).headers.get('location'), '/admin-giris?hata=kod', 'an expired code retries at /admin-giris');
+    assert.ok(toAdminLogin(await e.request('/admin')), 'no session from an expired code');
 
-    // Prepare with the owner's address, then verify a different mailbox.
+    // The emailed link (Auth.js's own callback) failing: Auth.js sends it to
+    // /giris-hatasi; for this Admin-originated login the proxy returns it to /admin-giris.
+    const link = await e.request(`/api/auth/callback/resend?${new URLSearchParams({ callbackUrl: '/admin', token: '999999', email: OWNER })}`);
+    const errorPage = new URL(link.headers.get('location'), BASE);
+    assert.equal(errorPage.pathname, '/giris-hatasi');
+    const retry = await e.request(`${errorPage.pathname}${errorPage.search}`);
+    assert.equal(new URL(retry.headers.get('location') || '/', BASE).pathname, '/admin-giris', 'admin login errors retry at /admin-giris');
+    assert.equal(new URL(retry.headers.get('location'), BASE).search, '?hata=kod');
+    const tooMany = await e.request('/giris-hatasi?error=TooMany');
+    assert.equal(new URL(tooMany.headers.get('location'), BASE).search, '?hata=cok-fazla');
+  });
+
+  await check('admin login: an admin-issued intent never binds another account; cross-origin requests refused', async () => {
+    const x = browser({ ip: '198.51.100.22' });
+    const cross = { Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' };
+    assert.equal((await adminSendCode(x, { headers: cross })).status, 403, 'cross-origin send refused');
+    assert.equal((await adminSubmitCode(x, '123456', cross)).status, 403, 'cross-origin verify refused');
+    assert.equal(x.jar.get(credentials.INTENT_COOKIE), undefined);
+
+    // Start an Admin login (the code goes to the owner), then verify a
+    // different mailbox directly through Auth.js.
     const intruder = browser({ ip: '198.51.100.23' });
-    assert.equal((await adminPrepare(intruder, 'owner@example.test')).status, 200);
-    const res = await adminVerify(intruder, 'intruder@example.test');
+    assert.equal((await adminSendCode(intruder)).headers.get('location'), '/admin-giris?adim=kod');
+    assert.equal(lastEmailedCode().to, OWNER, 'the intruder cannot redirect the code');
+    const token = await insertCode('intruder@example.test');
+    const res = await intruder.request(`/api/auth/callback/resend?${new URLSearchParams({ callbackUrl: '/admin', token, email: 'intruder@example.test' })}`);
     assert.equal(res.status, 302, `callback: ${res.status} ${res.headers.get('location')}`);
     assert.ok(toAdminLogin(await intruder.request('/admin')), 'the intruder is not an Admin');
     const db = dbConn();
@@ -611,15 +700,24 @@ async function check(name, fn) {
     assert.equal(bound, 0, 'no Session V2 session was bound for a non-owner through the admin surface');
   });
 
-  await check('normal login is unchanged: still behind the invite code, and unaffected by an earlier admin-surface attempt', async () => {
+  await check('normal login is unchanged: behind the invite code, own error page, unaffected by an earlier admin-surface attempt', async () => {
     const n = browser({ ip: '198.51.100.24' });
     assert.equal((await n.request('/api/session/login-intent', { method: 'POST' })).status, 401, 'app login-intent still requires access_ok');
+    const plainError = await n.request('/giris-hatasi?error=Verification');
+    assert.equal(plainError.status, 200, 'a normal login error keeps its own page');
     // Leave an admin marker for an old intent in this browser, then log in normally.
-    assert.equal((await adminPrepare(n, 'owner@example.test')).status, 200);
+    assert.equal((await adminSendCode(n)).headers.get('location'), '/admin-giris?adim=kod');
     await arrive(n);
     const account = await signUpWithCode(n, 'normal-after-admin@example.test', 'Normal');
     assert.equal(account.identityType, 'account', 'a normal login binds its own Session V2 session as before');
     assert.ok(n.jar.get('access_ok'), 'the normal flow still grants app access via the invite code');
+    assert.equal((await n.request('/giris-hatasi?error=Verification')).status, 200, 'after a normal login, its errors are not rerouted to Admin');
+  });
+
+  await check('admin login: the server log never contains ADMIN_OWNER_EMAIL (sends, wrong/expired codes, link errors above)', async () => {
+    assert.ok(log.includes('magic_code_sent') && log.includes('admin_login_code_miss'),
+      'the log covering the owner sends and wrong codes was captured');
+    hidesOwner(log, 'server log');
   });
 
   console.log(results.join('\n'));

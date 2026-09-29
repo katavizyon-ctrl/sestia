@@ -9,7 +9,7 @@ import { sessions } from '@/lib/db';
 import credentials from '@/lib/sessionCredentials.cjs';
 import adminAccess from '@/lib/adminAccess.cjs';
 
-const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/admin-login', '/api/health', '/giris-hatasi'];
+const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/admin-login', '/api/admin-login/verify', '/api/health', '/giris-hatasi'];
 
 // Session V2 lifecycle endpoints the Admin panel itself uses to validate and
 // renew the owner's session (app/admin/AdminSessionKeeper.js). An owner who
@@ -66,6 +66,17 @@ async function ownerAdminSessionOk(req) {
   }
 }
 
+// True when this browser's pending email login was started from
+// /admin-giris: the Admin marker names the very login intent this browser
+// currently holds. A later normal login issues a new intent, so it never
+// matches — normal login errors keep their own page.
+function adminOriginatedLogin(req) {
+  const marker = adminAccess.verifyAdminLogin(req.cookies.get(adminAccess.ADMIN_LOGIN_COOKIE)?.value, process.env.AUTH_SECRET);
+  const intentRaw = req.cookies.get(credentials.INTENT_COOKIE)?.value;
+  const intent = intentRaw && credentials.verify('intent', intentRaw, process.env.AUTH_SECRET);
+  return Boolean(marker && intent && marker === intent);
+}
+
 // Hygiene only: lib/session.js never reads this legacy cookie for
 // authorization, so leaving it is not a security issue by itself, but a
 // stale multi-hundred-day cookie serves no purpose once Session V2 is live.
@@ -113,6 +124,16 @@ export async function proxy(req) {
       accessTokens.verifyAccessToken(req.cookies.get('access_ok')?.value, 'access')) {
     const url = req.nextUrl.clone();
     url.pathname = '/';
+    return NextResponse.redirect(url);
+  }
+
+  // Auth.js sends every failed email login (wrong/expired code, a used or
+  // expired email link, too many attempts) to /giris-hatasi, whose retry
+  // leads into the user flow. An Admin-originated login retries at /admin-giris.
+  if (pathname === '/giris-hatasi' && adminAccess.ownerMode() && adminOriginatedLogin(req)) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/admin-giris';
+    url.search = req.nextUrl.searchParams.get('error') === 'TooMany' ? '?hata=cok-fazla' : '?hata=kod';
     return NextResponse.redirect(url);
   }
 
