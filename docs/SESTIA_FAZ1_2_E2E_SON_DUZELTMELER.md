@@ -1,7 +1,7 @@
 # Faz 1–2 E2E son düzeltmeler (§4.1, §4.2)
 
 **Tarih:** 24 Eylül 2026
-**Proje:** `C:\projects\1_ODA_1_KARAR`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı
+**Proje:** `C:\projects\SESTIA`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı
 **Kaynak:** `docs/SESTIA_FAZ1_2_IZOLE_UCTAN_UCA_TEST.md`, §4.1 ve §4.2
 **Uygulayan:** Claude Code
 

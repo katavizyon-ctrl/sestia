@@ -41,7 +41,7 @@ Mevcut v1 konseptlerindeki fotoğraf alanları CSS ile görünüm pencerelerine 
 
 ## Görsel üretimi
 
-`atmosfer.png`, yerleşik Imagegen aracıyla üretildi; CLI/API alternatifi kullanılmadı. Kaynak: `C:/Users/MSI/Downloads/SESTIA_EKRAN_2.png`. Çıktı: `C:/projects/1_ODA_1_KARAR/design-references/sestia-prototip/atmosfer.png`.
+`atmosfer.png`, yerleşik Imagegen aracıyla üretildi; CLI/API alternatifi kullanılmadı. Kaynak: `C:/Users/MSI/Downloads/SESTIA_EKRAN_2.png`. Çıktı: `C:/projects/SESTIA/design-references/sestia-prototip/atmosfer.png`.
 
 Kullanılan prompt:
 

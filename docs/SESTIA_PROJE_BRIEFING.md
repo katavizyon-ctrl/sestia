@@ -2,7 +2,7 @@
 
 **Karakter:** Sestia  
 **Belge tarihi:** 23 Eylül 2026  
-**Hazırlayan:** Claude (Claude Code). `1_ODA_1_KARAR` klasörünün tamamı, commit edilmemiş değişiklikler dahil tarandı.  
+**Hazırlayan:** Claude (Claude Code). `SESTIA` klasörünün tamamı, commit edilmemiş değişiklikler dahil tarandı.  
 **Kimin için:** Projeye yeni katılan geliştiriciler, tasarımcılar, test kullanıcılarıyla konuşacak kişiler ve ortaklar. Kısacası uygulamayı "tek oturuşta" anlaması gereken herkes.
 
 > **Bu belge nedir, ne değildir?**  
@@ -520,7 +520,7 @@ Başarı yalnızca karar ya da puan sayısıyla ölçülmemeli. Asıl sorular ş
 ## 14. Dosya haritası: nerede ne var?
 
 ```
-1_ODA_1_KARAR/
+SESTIA/
 ├── README.md                         teknik kurulum (eski "Bir Oda, Bir Karar" dili)
 ├── AGENTS.md / CLAUDE.md             "Bu Next.js bildiğin gibi değil" uyarısı
 ├── SESTIA_UYGULAMA_DENETIM_RAPORU.md uygulama geneli denetim (22 Eyl)

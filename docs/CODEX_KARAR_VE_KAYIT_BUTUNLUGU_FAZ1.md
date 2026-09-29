@@ -1,7 +1,7 @@
 # Bir Oda. Bir Eşya. — Karar ve kayıt bütünlüğü, Faz 1
 
 **Tarih:** 24 Eylül 2026  
-**Proje:** `C:\projects\1_ODA_1_KARAR`  
+**Proje:** `C:\projects\SESTIA`  
 **Kapsam:** Bağımsız denetimdeki B15, N03, N05, N06.  
 **Durum:** Kod uygulandı; 25 kalıcı regresyon/sözdizimi testi geçti. Commit ve deploy yapılmadı.
 

@@ -1,7 +1,7 @@
 # Faz 1–2 sonrası izole uçtan uca test
 
 **Tarih:** 24 Eylül 2026
-**Proje:** `C:\projects\1_ODA_1_KARAR`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı (Faz 1 + Faz 2 dahil)
+**Proje:** `C:\projects\SESTIA`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı (Faz 1 + Faz 2 dahil)
 **Uygulayan:** Claude Code. Uygulama kodunda değişiklik yapılmadı.
 
 ## 0. Sonuç

@@ -1,7 +1,7 @@
 # Bir Oda. Bir Eşya. — Gerçek bağımsız kod denetimi 02
 
 **Tarih:** 24 Eylül 2026 (inceleme 23 Eylül'de başladı).  
-**Proje:** `C:\projects\1_ODA_1_KARAR`  
+**Proje:** `C:\projects\SESTIA`  
 **İncelenen temel commit:** `668a1efb5de38d92e3a9de1ba22eaf26c21c3390` üzerindeki mevcut, commit edilmemiş çalışma ağacı.  
 **Denetçi:** Değişiklikleri uygulayan Claude Code oturumundan bağımsız Codex incelemesi.
 

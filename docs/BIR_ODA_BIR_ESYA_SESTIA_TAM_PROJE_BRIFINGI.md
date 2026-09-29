@@ -158,7 +158,7 @@ Sestia'nın hatırlaması, bir chat ekranındaki metni bir süre tutmaktan daha 
 
 # 12. MEVCUT UYGULAMANIN TEKNİK ZEMİNİ VE KRİTİK DOSYA SINIRLARI
 
-**22 Eylül 2026 tarihli `SESTIA_UYGULAMA_DENETIM_RAPORU.md` temel alınarak:** Uygulama Next.js 16, Auth.js v5, Resend magic-link, Drizzle ve `better-sqlite3` kullanan yerel dosya temelli SQLite mimarisine sahiptir. Projenin Windows kökü raporlarda `C:\projects\1_ODA_1_KARAR` olarak geçer; bu klasörün eski adı taşıması ürünün güncel adını değiştirmez. Yerel adres `http://localhost:3000` olarak raporlanmıştır. Railway üzerinde bir production deployment vardır; yerel değişiklikler kullanıcı açıkça izin vermedikçe buraya deploy edilmemeli, production veritabanı/volume'u veya gerçek kullanıcı verisi deneme alanı gibi kullanılmamalıdır.
+**22 Eylül 2026 tarihli `SESTIA_UYGULAMA_DENETIM_RAPORU.md` temel alınarak:** Uygulama Next.js 16, Auth.js v5, Resend magic-link, Drizzle ve `better-sqlite3` kullanan yerel dosya temelli SQLite mimarisine sahiptir. Projenin Windows kökü raporlarda `C:\projects\SESTIA` olarak geçer; bu klasörün eski adı taşıması ürünün güncel adını değiştirmez. Yerel adres `http://localhost:3000` olarak raporlanmıştır. Railway üzerinde bir production deployment vardır; yerel değişiklikler kullanıcı açıkça izin vermedikçe buraya deploy edilmemeli, production veritabanı/volume'u veya gerçek kullanıcı verisi deneme alanı gibi kullanılmamalıdır.
 
 `lib/db.js` raporda `data/app.db` SQLite dosyasına bağlanır; Drizzle, Auth.js'in aynı SQLite dosyası üzerindeki adapter entegrasyonunda kullanılır. Supabase projede fiilen entegre değildir; bazı belgelerde gelecekteki olası Postgres taşıma örneği olarak anılması, projede şu anda Supabase bulunduğu anlamına gelmez. Resend, denetim tarihi itibarıyla magic-link e-postalarında kullanılmaktadır; uygulamanın her yerinden kullanılabilecek genel bildirim altyapısı kendiliğinden var sayılmamalıdır. Test aşamasında gerçek magic-link e-postasının spam klasörüne düşüp yine de bağlantıyla açıldığına ilişkin geçmiş rapor vardır; production domain ve teslimat durumu daha sonra tekrar kontrol edilmelidir.
 
@@ -209,7 +209,7 @@ Sestia ilk günden sıfır bilgiyle başlamamalıdır. Kullanıcı, uygulamaya g
 Bilgi Kütüphanesi'nin yalnızca soyut bir “ileride yapılacak bilgi sistemi” olarak kalması kullanıcı tarafından düzeltilmiştir. Kullanıcı araştırmaların yapıldığı gerçek, bağımsız bir ana klasör ve bunun altında kategori, mimari, kaynak, öğrenme ve arşiv alanları istemiştir. Codex'in bildirdiğine göre proje kökünde `SESTIA_BILGI_KUTUPHANESI/` oluşturulmuş, ilk mimari rapor bunun içine taşınmış ve bilgi türleri/ilişki şeması ayrı dosyada hazırlanmıştır. Bu, kullanıcı onayından sonra gerçekleşmiştir; mevcut son rapor 15 başlangıç klasörünü ve içerik üretiminin sonuçlarını listeler.
 
 ```text
-C:\projects\1_ODA_1_KARAR\
+C:\projects\SESTIA\
 └── SESTIA_BILGI_KUTUPHANESI\
     ├── 00_MIMARI_VE_PLANLAMA\
     ├── 01_ESYALAR_VE_BILESENLER\

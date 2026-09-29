@@ -4,9 +4,9 @@ Yöntem: yerleşik ImageGen; her görsel için ayrı çağrı. Orijinal üç PNG
 
 ## Referanslar
 
-- C:/projects/1_ODA_1_KARAR/design-references/ChatGPT Image Sep 22, 2026, 07_13_06 PM.png
-- C:/projects/1_ODA_1_KARAR/design-references/ChatGPT Image Sep 22, 2026, 07_13_59 PM.png
-- C:/projects/1_ODA_1_KARAR/design-references/ChatGPT Image Sep 22, 2026, 07_14_12 PM.png
+- C:/projects/SESTIA/design-references/ChatGPT Image Sep 22, 2026, 07_13_06 PM.png
+- C:/projects/SESTIA/design-references/ChatGPT Image Sep 22, 2026, 07_13_59 PM.png
+- C:/projects/SESTIA/design-references/ChatGPT Image Sep 22, 2026, 07_14_12 PM.png
 
 ## Ortak tanım
 

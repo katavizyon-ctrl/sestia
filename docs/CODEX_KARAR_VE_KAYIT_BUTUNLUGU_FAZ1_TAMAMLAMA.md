@@ -1,7 +1,7 @@
 # Faz 1 tamamlama — karar ve kayıt bütünlüğü
 
 Tarih: 24 Eylül 2026  
-Proje: `C:\projects\1_ODA_1_KARAR`  
+Proje: `C:\projects\SESTIA`  
 Temel Git durumu: `668a1ef` üzerindeki mevcut, commit edilmemiş çalışma ağacı.
 
 ## 1. Sonuç ve kapsam

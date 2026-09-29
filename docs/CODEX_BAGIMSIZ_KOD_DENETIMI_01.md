@@ -1,7 +1,7 @@
 # BİR ODA. BİR EŞYA. — BAĞIMSIZ KOD VE VERİ BÜTÜNLÜĞÜ DENETİMİ 01
 
 **Tarih:** 23 Eylül 2026
-**Proje:** `C:\projects\1_ODA_1_KARAR`
+**Proje:** `C:\projects\SESTIA`
 **Tür:** Salt okunur denetim. Uygulama kodu değiştirilmedi. Commit, deploy, veritabanı yazımı ve ücretli API çağrısı yapılmadı. Yazılan tek dosya bu rapor.
 
 > **Bağımsızlık notu:** Dosya adı "CODEX" olsa da bu denetim, denetlenen değişiklikleri yazan Claude Code oturumunda yapıldı. Bu yüzden tam anlamıyla bağımsız değil. Bunu dengelemek için önceki raporlardaki iddialar koddan, `git` geçmişinden, veritabanı yedeğiyle karşılaştırmadan ve ağsız birim kontrollerinden yeniden doğrulandı. Önceki raporlarda hatalı çıkan bir iddia da bu raporda açıkça düzeltildi (B02). Gerçek bağımsızlık isteniyorsa aynı kontrol listesinin başka bir araç ya da kişi tarafından tekrarlanması önerilir.

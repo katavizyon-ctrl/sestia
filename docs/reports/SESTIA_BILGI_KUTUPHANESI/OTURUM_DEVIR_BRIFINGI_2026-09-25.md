@@ -11,7 +11,7 @@ Bu belge, 25 Eylül 2026'daki uzun çalışma oturumunu yeni bir sohbete devretm
 ## 1. Bağlam — neyin üzerinde çalışıyoruz?
 
 **Proje:** *Bir Oda. Bir Karar.* — Next.js uygulaması.
-- Yol: `C:\projects\1_ODA_1_KARAR`
+- Yol: `C:\projects\SESTIA`
 - Uygulamanın asistan karakteri **SESTIA**.
 
 **SESTIA Bilgi Kütüphanesi** (`SESTIA_BILGI_KUTUPHANESI/`):

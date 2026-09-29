@@ -1,6 +1,6 @@
 # SESTIA HAFIZA MİMARİSİ — YENİDEN DENETİM
 
-**Proje:** Bir Oda. Bir Eşya. — Çalışma dizini: `C:\projects\1_ODA_1_KARAR`
+**Proje:** Bir Oda. Bir Eşya. — Çalışma dizini: `C:\projects\SESTIA`
 **Denetim tarihi:** 22 Eylül 2026
 **Kapsam:** READ-ONLY. Kod değiştirilmedi, migration çalıştırılmadı, veritabanına yazılmadı, ücretli API çağrısı yapılmadı, deploy edilmedi.
 **Yöntem:** Bu rapor, önceki denetim raporlarının bulgularını GÜVENİLİR kabul etmeden, mevcut çalışma kopyasını (kaydedilmemiş değişiklikler dahil) sıfırdan yeniden okuyarak hazırlanmıştır. Her teknik iddia dosya+satır referansıyla desteklenmiştir. Production'da doğrulanamayan hiçbir şey doğrulanmış gibi sunulmamıştır.

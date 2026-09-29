@@ -1,7 +1,7 @@
 # Bir Oda. Bir Eşya. — Codex Faz 1 bağımsız doğrulaması
 
 **Tarih:** 24 Eylül 2026
-**Proje:** `C:\projects\1_ODA_1_KARAR`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı
+**Proje:** `C:\projects\SESTIA`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı
 **Doğrulanan:** `docs/CODEX_KARAR_VE_KAYIT_BUTUNLUGU_FAZ1.md` (B15, N03, N05, N06)
 **Denetçi:** Claude Code. Faz 1 kodunu Codex yazdı. Bu oturumda uygulama kodunda değişiklik yapılmadı.
 

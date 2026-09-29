@@ -1,7 +1,7 @@
 # Faz 2 — Fotoğraf ve oturum bütünlüğü
 
 **Tarih:** 24 Eylül 2026
-**Proje:** `C:\projects\1_ODA_1_KARAR`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı
+**Proje:** `C:\projects\SESTIA`, `668a1ef` üzerindeki commit edilmemiş çalışma ağacı
 **Uygulayan:** Claude Code. Codex, Faz 2'nin büyük kısmını kullanım limitine takılmadan önce yazmıştı. Bu oturumda o iş devralındı, doğrulandı ve kalan açıklar kapatıldı.
 **Kapsam:** B01, N01, B13, N02, N04. Faz 1 korumaları (atomik ve idempotent onay, analiz kimliği, revision, aktif tarama nesli, taslak seçimler, özgün Sestia önerisi) değiştirilmedi.
 

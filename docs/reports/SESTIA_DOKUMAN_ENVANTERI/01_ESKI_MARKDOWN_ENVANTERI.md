@@ -8,7 +8,7 @@
 
 ## 1. Scope
 
-- **Proje kökü:** `C:\projects\1_ODA_1_KARAR` (recursive tarama).
+- **Proje kökü:** `C:\projects\SESTIA` (recursive tarama).
 - **Dahil etme ölçütü:** uzantısı `.md` olan ve dosya sistemi *modified* zaman damgası **2026-09-22 23:59:59 (yerel saat, UTC+03:00) ve öncesi** olan dosyalar.
 - **Tarih nedeniyle dışarıda bırakılanlar:** modified zaman damgası 2026-09-23 00:00:00 veya sonrası olan `.md` dosyaları. Bunlar yalnızca **sayıldı**; içerikleri bu raporun analizine alınmadı. Bölüm 7 ve 9'da yalnızca *dosya adı/yolu* düzeyinde, "olası ilişki, incelenmedi" notuyla anılırlar.
 - **Yapısal olarak hariç tutulan klasörler:** `node_modules/` (üçüncü taraf paket belgeleri, 517 adet .md; proje belgesi değil) ve `.git/`. Bu dosyalar ne kapsam içi ne de "tarih nedeniyle dışarıda" sayısına dahildir.
