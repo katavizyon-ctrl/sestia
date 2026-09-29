@@ -4,6 +4,8 @@
 
 ## Özet
 
+> **Not — 29.09.2026:** Aşağıdaki ilk teşhis daha sonraki incelemede revize edilmiştir. Kesin kök neden ve doğrulanmış çözüm için `RESOLVED — 2026-09-29` bölümüne bakın.
+
 | | |
 |---|---|
 | Belirti | "E-posta ile devam et" → "Giriş kodu gönder" → *E-posta gönderilemedi (sunucu e-posta yapılandırmasında bir sorun var).* |
@@ -72,3 +74,57 @@ Kod değişikliği gerekmez.
 4. Değişken değişince staging yeniden deploy edilir ve sahip dışı bir adresle "Giriş kodu gönder" yeniden denenir.
 
 Geçici alternatif (düzeltme değil): doğrulama yapılana kadar yalnızca Resend hesabı sahibinin adresiyle test etmek.
+
+## RESOLVED — 2026-09-29
+
+Sorun çözüldü ve uçtan uca doğrulandı. Bu bölüm yukarıdaki teşhisi kapatır. Yukarıdaki bölümler 27 Eylül'deki durumu anlatır ve değiştirilmedi.
+
+### Asıl hata
+
+- Staging kullanıcıya e-posta yapılandırma hatasını gösteriyordu. Railway ve Resend loglarında Resend'den HTTP 403 dönüyordu.
+- Resend'e giden asıl isteğin gövdesinde gönderen `Sestia <onboarding@resend.dev>` idi. Bu, Resend'in test göndericisi. Bu yüzden hesap sahibi dışındaki adreslere teslimat reddediliyordu.
+
+### Resend / DNS durumu
+
+- `mail.oneheus.com` Resend'de zaten Verified durumdaydı.
+- `RESEND_API_KEY` geçerliydi ve istekler doğru Resend hesabına ulaşıyordu.
+- DNS, Cloudflare yetkilendirmesi, DKIM/SPF/DMARC ve doğrulanmış gönderen alan adı kök neden değildi. Son düzeltme için DNS veya Resend alan adı değişikliği gerekmedi.
+
+### Kök neden
+
+- Railway'de saklanan staging değişkeni zaten `AUTH_EMAIL_FROM=SESTIA <login@mail.oneheus.com>` olarak güncellenmişti.
+- Çalışan staging deployment'ı (`e16b40b3-096d-4bfb-8a77-fc09b854038e`, 27.09.2026 07:44) bu değişiklikten eskiydi. Konteynerin içinde hâlâ `AUTH_EMAIL_FROM=Sestia <onboarding@resend.dev>` vardı. Bu, `railway ssh` ile hem kabukta hem de `/proc/1/environ` üzerinden okunarak doğrulandı.
+- Kod doğruydu. `lib/auth.js`, `from` değerini çalışma anında `process.env.AUTH_EMAIL_FROM`'dan okuyor, derlemede sabitlenmiyor. Auth.js'in kendi varsayılan göndericisi `Auth.js <no-reply@authjs.dev>` ve bu değer istekte görülmedi. Konteynerde `.env.local` da yoktu.
+- Eski deployment, Railway'deki yeni değişken değerini hiç almamıştı. `Sestia <onboarding@resend.dev>` değeri depoda yalnızca yerel, gitignore'daki `.env.local` dosyasında geçiyor. Staging'e bu dosya ulaşmadı.
+
+### Düzeltme sırasındaki engel
+
+- 29.09.2026'da Railway'de aktif bir deployment olayı vardı: "API degradation causing slow or stuck deployments."
+- İlk yeniden deploy denemesi `Deploys have been paused temporarily` ile reddedildi. Yeni deployment oluşmadı. Alternatif bir deploy yolu denenmedi; Railway'in toparlanması beklendi.
+
+### Son düzeltme
+
+- Railway toparlanmaya başlayınca mevcut staging deployment'ının kod anlık görüntüsü (f175253) `railway redeploy` ile yeniden deploy edildi.
+- `--from-source` ve `railway up` kullanılmadı. Güncel HEAD deploy edilmedi. Production'a dokunulmadı. Kaynak dosya ve Railway değişkeni değiştirilmedi.
+- Yeni deployment: `5239cc18-e7bc-4f21-8c7c-51504d763406`. SUCCESS durumuna ulaştı ve `/api/health` sağlık kontrolünü geçti.
+- Yeni konteyner doğrudan kontrol edildi. Değer tam olarak `AUTH_EMAIL_FROM=SESTIA <login@mail.oneheus.com>` idi.
+
+### Uçtan uca doğrulama
+
+- Hesap sahibi olmayan bir Gmail adresine giriş e-postası gönderildi. Arayüz "E-posta yolda." / 6 haneli kod ekranına geçti.
+- İlk Gmail testinde e-posta Spam'e düştü. İkinci, yeni bir Gmail hesabında e-posta doğrudan Gelen Kutusu'na geldi.
+- 6 haneli kod girildi ve giriş uçtan uca başarıyla tamamlandı.
+
+### Son durum
+
+- Staging e-posta girişi çalışıyor. Resend üzerinden giden işlem e-postaları çalışıyor. Sorun çözüldü.
+- Teslim edilebilirlik ve itibar takibi ileride bir sağlamlaştırma işi olarak kalabilir, şu an engel değil.
+
+### Operasyon notu
+
+Resend beklenmedik şekilde yine `onboarding@resend.dev` adresinden gönderirse şu ikisini karşılaştırın:
+
+1. Railway'de saklanan `AUTH_EMAIL_FROM` değeri
+2. Şu an çalışan staging konteynerinin içindeki değer
+
+Railway'de saklanan bir değişken değişikliğinin zaten çalışan bir deployment'a ulaştığını varsaymayın.
