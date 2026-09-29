@@ -58,12 +58,14 @@ function expireSession(sessionId, idleTimeoutMs = 300000) {
 }
 
 // Minimal cookie jar: one per simulated browser.
-function browser() {
+// `ip` (optional) makes this simulated browser a distinct client for the
+// proxy's per-client attempt limiters, as a separate real device would be.
+function browser({ ip } = {}) {
   const jar = new Map();
   return {
     jar,
     async request(pathname, options = {}) {
-      const headers = { ...(options.headers || {}), cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') };
+      const headers = { ...(options.headers || {}), ...(ip ? { 'X-Forwarded-For': ip } : {}), cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') };
       const res = await fetch(BASE + pathname, { ...options, headers, redirect: 'manual' });
       for (const line of res.headers.getSetCookie()) {
         const [pair] = line.split(';');
@@ -128,6 +130,26 @@ async function signUpWithCode(b, email, name) {
   assert.equal(s.status, 200);
   assert.equal(s.body.identityType, 'account');
   return s.body;
+}
+
+// The Admin login surface: prepare via POST /api/admin-login (as
+// /admin-giris does), then the same Auth.js code callback, returning to
+// /admin. `codeEmail` lets a test verify a different address than the one
+// prepared. No access code is ever sent.
+async function insertCode(email) {
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const db = dbConn();
+  db.prepare('INSERT INTO auth_verificationToken (identifier, token, expires) VALUES (?, ?, ?)')
+    .run(email, crypto.createHash('sha256').update(`${code}${AUTH_SECRET}`).digest('hex'), Date.now() + 15 * 60 * 1000);
+  db.close();
+  return code;
+}
+async function adminPrepare(b, email, headers = {}) {
+  return b.request('/api/admin-login', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ email }) });
+}
+async function adminVerify(b, email) {
+  const code = await insertCode(email);
+  return b.request(`/api/auth/callback/resend?${new URLSearchParams({ callbackUrl: '/admin', token: code, email })}`);
 }
 
 async function waitForServer() {
@@ -504,19 +526,100 @@ async function check(name, fn) {
       body: new URLSearchParams({ sessionId: ownerSession, value: '1', returnTo }).toString() });
     const cross = await toggle({ Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' }, '/admin/oturumlar');
     assert.equal(cross.status, 403, 'cross-origin toggle is rejected');
-    const ok = await toggle({}, 'https://evil.example.test/steal');
+    // The Location is relative, so no server-side origin (e.g. Railway's
+    // internal https://localhost:8080) can ever leak into the redirect.
+    const ok = await toggle({ 'X-Forwarded-Host': 'localhost:8080' }, 'https://evil.example.test/steal');
     assert.equal(ok.status, 303);
-    const back = new URL(ok.headers.get('location'), BASE);
-    // Next dev reports its own host as localhost; what matters is that the
-    // hostile target was replaced by the admin sessions page.
-    assert.ok(back.hostname !== 'evil.example.test' && back.pathname === '/admin/oturumlar',
-      `return target is confined to same-origin /admin: ${ok.headers.get('location')}`);
+    assert.equal(ok.headers.get('location'), '/admin/oturumlar', 'hostile target replaced; relative, no origin');
+    const kept = await toggle({}, '/admin/oturumlar?tur=account&test=include');
+    assert.equal(kept.headers.get('location'), '/admin/oturumlar?tur=account&test=include', 'the admin page and its filters are kept');
+    const internal = await toggle({}, 'https://localhost:8080/admin/hesaplar');
+    assert.equal(internal.headers.get('location'), '/admin/oturumlar', 'an internal-origin URL is never echoed back');
     const db2 = dbConn();
     assert.equal(db2.prepare('SELECT internal_test FROM session_visit_metadata WHERE session_id = ?').get(ownerSession).internal_test, 1);
     db2.close();
 
     expireSession(ownerSession, 600000);
     assert.ok(toLogin(await owner.request('/admin/hesaplar')), 'an idle-expired owner session no longer opens admin');
+  });
+
+  const toAdminLogin = (res) => [307, 308].includes(res.status) && new URL(res.headers.get('location'), BASE).pathname === '/admin-giris';
+
+  await check('admin login: signed-out owner signs in directly at /admin-giris without the invite code, lands on /admin, gets no access_ok', async () => {
+    const o = browser({ ip: '198.51.100.21' }); // fresh browser: never saw /hosgeldin, /giris or /api/access
+    assert.ok(toAdminLogin(await o.request('/admin')));
+    const page = await o.request('/admin-giris');
+    assert.equal(page.status, 200);
+    assert.ok((await page.text()).includes('admin-login-email'), '/admin-giris offers the owner email form');
+
+    const prep = await adminPrepare(o, ' Owner@Example.test ');
+    assert.equal(prep.status, 200, `admin login prep: ${prep.status}`);
+    assert.ok(o.jar.get(credentials.SCOPE_COOKIE) && o.jar.get(credentials.INTENT_COOKIE), 'Session V2 prerequisites were set up');
+    const done = await adminVerify(o, 'owner@example.test');
+    assert.equal(done.status, 302, `callback: ${done.status} ${done.headers.get('location')}`);
+    assert.equal(new URL(done.headers.get('location'), BASE).pathname, '/admin', 'successful verification returns to /admin');
+    for (const p of ['/admin', '/admin/hesaplar', '/admin/oturumlar']) assert.equal((await o.request(p)).status, 200, `${p} opens`);
+    const already = await o.request('/admin-giris');
+    assert.equal(new URL(already.headers.get('location') || '/', BASE).pathname, '/admin', 'a signed-in owner is sent straight to /admin');
+
+    // Admin login grants no app access.
+    assert.equal(o.jar.get('access_ok'), undefined, 'admin login never sets access_ok');
+    const home = await o.request('/');
+    assert.equal(new URL(home.headers.get('location') || '/', BASE).pathname, '/hosgeldin', 'the app still requires the invite code');
+    assert.equal((await o.request('/api/state')).status, 401);
+    assert.equal((await o.request('/api/rooms')).status, 401);
+
+    // The panel can still validate and renew its own Session V2 session.
+    const status = await o.request('/api/session');
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).state, 'active');
+    const renew = await o.request('/api/session/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'click', eventAt: Date.now() }) });
+    assert.equal(renew.status, 200, 'real interaction in the panel renews the owner session');
+
+    // Expiry still requires a new email code; the admin surface serves it.
+    const db = dbConn();
+    const ownerId = db.prepare("SELECT id FROM auth_user WHERE email = 'owner@example.test'").get().id;
+    const sid = db.prepare("SELECT id FROM sestia_sessions WHERE kind = 'account' AND subject_id = ? ORDER BY created_at_ms DESC").get(ownerId).id;
+    db.close();
+    expireSession(sid, 600000);
+    assert.ok(toAdminLogin(await o.request('/admin')), 'an expired owner session must reauthenticate');
+    assert.equal((await o.request('/api/session')).status, 401, 'without an active owner session the lifecycle endpoints stay gated');
+    assert.equal((await adminPrepare(o, 'owner@example.test')).status, 200);
+    assert.equal(new URL((await adminVerify(o, 'owner@example.test')).headers.get('location'), BASE).pathname, '/admin');
+    assert.equal((await o.request('/admin')).status, 200, 'reauthenticated through /admin-giris');
+  });
+
+  await check('admin login: only the owner email is accepted; an admin-issued intent never binds another account; cross-origin prep refused', async () => {
+    const x = browser({ ip: '198.51.100.22' });
+    const refused = await adminPrepare(x, 'someone-else@example.test');
+    assert.equal(refused.status, 403);
+    assert.equal(x.jar.get(credentials.INTENT_COOKIE), undefined, 'no login intent for a non-owner address');
+    const cross = await adminPrepare(x, 'owner@example.test', { Origin: 'https://evil.example.test', 'Sec-Fetch-Site': 'cross-site' });
+    assert.equal(cross.status, 403, 'cross-origin prep rejected');
+
+    // Prepare with the owner's address, then verify a different mailbox.
+    const intruder = browser({ ip: '198.51.100.23' });
+    assert.equal((await adminPrepare(intruder, 'owner@example.test')).status, 200);
+    const res = await adminVerify(intruder, 'intruder@example.test');
+    assert.equal(res.status, 302, `callback: ${res.status} ${res.headers.get('location')}`);
+    assert.ok(toAdminLogin(await intruder.request('/admin')), 'the intruder is not an Admin');
+    const db = dbConn();
+    const user = db.prepare("SELECT id FROM auth_user WHERE email = 'intruder@example.test'").get();
+    const bound = user ? db.prepare('SELECT COUNT(*) AS n FROM sestia_sessions WHERE subject_id = ?').get(user.id).n : 0;
+    db.close();
+    assert.equal(bound, 0, 'no Session V2 session was bound for a non-owner through the admin surface');
+  });
+
+  await check('normal login is unchanged: still behind the invite code, and unaffected by an earlier admin-surface attempt', async () => {
+    const n = browser({ ip: '198.51.100.24' });
+    assert.equal((await n.request('/api/session/login-intent', { method: 'POST' })).status, 401, 'app login-intent still requires access_ok');
+    // Leave an admin marker for an old intent in this browser, then log in normally.
+    assert.equal((await adminPrepare(n, 'owner@example.test')).status, 200);
+    await arrive(n);
+    const account = await signUpWithCode(n, 'normal-after-admin@example.test', 'Normal');
+    assert.equal(account.identityType, 'account', 'a normal login binds its own Session V2 session as before');
+    assert.ok(n.jar.get('access_ok'), 'the normal flow still grants app access via the invite code');
   });
 
   console.log(results.join('\n'));

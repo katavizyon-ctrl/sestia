@@ -9,7 +9,13 @@ import { sessions } from '@/lib/db';
 import credentials from '@/lib/sessionCredentials.cjs';
 import adminAccess from '@/lib/adminAccess.cjs';
 
-const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/health', '/giris-hatasi'];
+const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/admin-login', '/api/health', '/giris-hatasi'];
+
+// Session V2 lifecycle endpoints the Admin panel itself uses to validate and
+// renew the owner's session (app/admin/AdminSessionKeeper.js). An owner who
+// signed in through /admin-giris holds no access_ok, so these three are also
+// allowed for the verified owner's active session — nothing else is.
+const OWNER_SESSION_PATHS = ['/api/session', '/api/session/bootstrap', '/api/session/activity'];
 
 // 6 haneli giriş kodu tahmin edilemesin: kod doğrulama isteği bağlantı başına
 // sınırlı (her deneme sayılır; başarılı giriş sayacı sıfırlamaz, 15 dk sonra açılır).
@@ -137,6 +143,9 @@ export async function proxy(req) {
   }
 
   const accessOk = accessTokens.verifyAccessToken(req.cookies.get('access_ok')?.value, 'access');
+  if (!accessOk && OWNER_SESSION_PATHS.includes(pathname) && adminAccess.ownerMode() && await ownerAdminSessionOk(req)) {
+    return NextResponse.next();
+  }
   if (!accessOk) {
     if (pathname.startsWith('/api')) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

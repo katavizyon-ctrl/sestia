@@ -2,19 +2,11 @@ import { NextResponse } from 'next/server';
 import { visitMetadata } from '@/lib/db';
 import { getAdminAccess } from '@/lib/adminGuard';
 import { isSameOriginRequest } from '@/lib/sameOrigin.cjs';
+import adminAccess from '@/lib/adminAccess.cjs';
 
 export const runtime = 'nodejs';
 
 const SESSION_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-
-// Only same-origin /admin pages are valid places to return to.
-function returnUrl(req, raw) {
-  try {
-    const url = new URL(typeof raw === 'string' && raw ? raw : '/admin/oturumlar', req.url);
-    if (url.origin === new URL(req.url).origin && (url.pathname === '/admin' || url.pathname.startsWith('/admin/'))) return url;
-  } catch {}
-  return new URL('/admin/oturumlar', req.url);
-}
 
 // Explicit, admin-only classification. Never inferred from IP/geo/device/
 // timing (see docs/reports/SESTIA_VISITOR_SESSION_METADATA_OBSERVABILITY_AUDIT.md
@@ -31,5 +23,7 @@ export async function POST(req) {
     return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
   }
   visitMetadata.setInternalTest(sessionId, value === '1');
-  return NextResponse.redirect(returnUrl(req, form?.get('returnTo')?.toString()), { status: 303 });
+  // Relative Location: the browser resolves it against the page it is on.
+  // Building an absolute URL from req.url leaked Railway's internal origin.
+  return new NextResponse(null, { status: 303, headers: { Location: adminAccess.adminReturnPath(form?.get('returnTo')?.toString()) } });
 }
