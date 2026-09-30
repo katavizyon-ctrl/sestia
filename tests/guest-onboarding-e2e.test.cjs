@@ -714,6 +714,31 @@ async function check(name, fn) {
     assert.equal((await n.request('/giris-hatasi?error=Verification')).status, 200, 'after a normal login, its errors are not rerouted to Admin');
   });
 
+  await check('visit geo uses the visitor, not a trailing CDN hop: guest and account capture store the leftmost public address\'s country', async () => {
+    // Railway via its Fastly CDN: "visitor, cdn-edge". Staging stored the CDN
+    // edge's country (Italy/Brazil) for a visitor in Türkiye.
+    const visitor = '85.105.1.1';
+    const cdnEdge = '151.101.1.1';
+    const { lookupCoarseGeo } = require('../lib/geo.cjs');
+    const expected = lookupCoarseGeo(visitor).countryCode;
+    assert.ok(expected && expected !== lookupCoarseGeo(cdnEdge).countryCode, 'fixtures resolve to different countries');
+    const v = browser({ ip: `${visitor}, ${cdnEdge}` });
+    const guest = await arrive(v);
+    const db = dbConn();
+    const guestRow = db.prepare('SELECT * FROM session_visit_metadata WHERE session_id = ?').get(guest.sessionId);
+    db.close();
+    assert.equal(guestRow.country_code, expected, 'guest session geo comes from the visitor address');
+    const account = await signUpWithCode(v, 'geo-visitor@example.test', 'Geo');
+    const db2 = dbConn();
+    const sid = db2.prepare("SELECT id FROM sestia_sessions WHERE kind = 'account' AND subject_id = ? ORDER BY created_at_ms DESC").get(account.identityId).id;
+    const accountRow = db2.prepare('SELECT * FROM session_visit_metadata WHERE session_id = ?').get(sid);
+    db2.close();
+    assert.equal(accountRow.country_code, expected, 'account session geo comes from the visitor address');
+    for (const row of [guestRow, accountRow]) {
+      assert.ok(!JSON.stringify(row).includes(visitor) && !JSON.stringify(row).includes(cdnEdge), 'no raw IP is persisted');
+    }
+  });
+
   await check('admin login: the server log never contains ADMIN_OWNER_EMAIL (sends, wrong/expired codes, link errors above)', async () => {
     assert.ok(log.includes('magic_code_sent') && log.includes('admin_login_code_miss'),
       'the log covering the owner sends and wrong codes was captured');

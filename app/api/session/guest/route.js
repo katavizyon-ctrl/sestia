@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { sessions, visitMetadata } from '@/lib/db';
 import credentials from '@/lib/sessionCredentials.cjs';
 import { isSameOriginRequest } from '@/lib/sameOrigin.cjs';
-import { clientIp } from '@/lib/clientNetwork.cjs';
+import { clientIpForGeo } from '@/lib/clientNetwork.cjs';
 import { lookupCoarseGeo } from '@/lib/geo.cjs';
 import { classifyUserAgent } from '@/lib/userAgentClass.cjs';
 
@@ -64,7 +64,7 @@ export async function POST(req) {
   // establishment. Raw IP is read once, used for one in-process lookup, and
   // discarded; only the derived fields are persisted.
   try {
-    const ip = clientIp(req.headers);
+    const ip = clientIpForGeo(req.headers);
     const geo = lookupCoarseGeo(ip);
     const ua = classifyUserAgent(req.headers.get('user-agent') || '');
     let referrerHost = null;
