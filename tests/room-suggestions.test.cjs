@@ -26,7 +26,7 @@ function loadApi(db) {
     visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),
   };
   vm.createContext(ctx);
-  vm.runInContext(code + ';globalThis.api={createRoom,creations,roomSuggestions,getRoomDetail,getRoomName,logEvent};', ctx);
+  vm.runInContext(code + ';globalThis.api={createRoom,creations,roomSuggestions,getRoomDetail,getRoomName,getRoomBrief,setRoomGoal,updateRoomBrief,ROOM_BRIEF_LIMITS,logEvent};', ctx);
   return ctx.api;
 }
 
@@ -50,8 +50,8 @@ const IDEAS = {
   seen: ['pencere önünde krem kanepe', 'sağda boş köşe'],
   summary: 'Pencere tarafı aydınlık, karşı köşe boş kalmış.',
   ideas: [
-    { area: 'yerlesim', title: 'Koltuğu pencereye çevir', detail: 'Koltuğu pencerenin önüne al.' },
-    { area: 'isik', title: 'Köşeye ayaklı lamba', detail: 'Boş köşeye sıcak ışıklı bir lamba.' },
+    { phase: 'baslangic', area: 'ayiklama', title: 'Önce kapı önünü aç', detail: 'Kapı önündeki torbaları koridora al.', how: ['Torbaları topla'], time: '15 dakika' },
+    { phase: 'sonra', area: 'isik', title: 'Köşeye ayaklı lamba', detail: 'Boş köşeye sıcak ışıklı bir lamba.' },
   ],
 };
 
@@ -67,8 +67,8 @@ function loadRoute(file, f, { owner = 'owner', suggestRoomIdeas, maxBytes = 5 * 
     fs: require('fs/promises'), path,
     process: { cwd: () => f.directory },
     getIdentity: async () => (owner ? { id: owner } : null),
-    roomSuggestions: f.api.roomSuggestions, getRoomName: f.api.getRoomName, logEvent: f.api.logEvent,
-    MAX_SUGGESTION_IMAGE_BYTES: maxBytes,
+    roomSuggestions: f.api.roomSuggestions, getRoomName: f.api.getRoomName, getRoomBrief: f.api.getRoomBrief, logEvent: f.api.logEvent,
+    MAX_SUGGESTION_IMAGE_BYTES: maxBytes, MAX_SUGGESTION_PHOTOS: 4,
     suggestRoomIdeas: async (...args) => {
       calls.suggest += 1;
       calls.lastArgs = args;
@@ -153,10 +153,13 @@ test('route: happy path sends the stored photo bytes and room name, saves and re
   const { res, calls } = await postSuggestion(f, f.roomId, { photoId: f.photoId });
   assert.equal(res.status, 200);
   assert.equal(calls.suggest, 1, 'exactly one AI call');
-  const [image, roomName] = calls.lastArgs;
+  const [images, room] = calls.lastArgs;
+  assert.equal(images.length, 1, 'the room has one photo');
+  const [image] = images;
   assert.equal(Buffer.from(image.base64, 'base64').toString(), 'fake-jpeg-bytes', 'bytes come from the stored room photo');
   assert.equal(image.mediaType, 'image/jpeg');
-  assert.equal(roomName, 'Salon');
+  assert.equal(room.name, 'Salon');
+  assert.equal(room.goal, null, 'no goal written yet');
   assert.deepEqual(res.body.ideas, IDEAS.ideas);
   assert.equal(f.api.roomSuggestions.get(res.body.id, 'owner').summary, IDEAS.summary, 'persisted');
 });
@@ -231,12 +234,12 @@ test('suggestRoomIdeas: a valid answer is trimmed and returned; the room name go
   const { suggestRoomIdeas, sent } = loadSuggestRoomIdeas(JSON.stringify({
     seen: ['  masada kağıt yığını  '],
     summary: '  Aydınlık bir oda.  ',
-    ideas: [{ area: 'renk', title: ' Sıcak tonlar ', detail: ' Yastıklarda hardal. ' }],
+    ideas: [{ phase: 'sonra', area: 'renk', title: ' Sıcak tonlar ', detail: ' Yastıklarda hardal. ' }],
   }));
   const result = await suggestRoomIdeas(IMAGE, 'Çalışma <odası>');
   assert.deepEqual(JSON.parse(JSON.stringify(result.seen)), ['masada kağıt yığını']);
   assert.equal(result.summary, 'Aydınlık bir oda.');
-  assert.deepEqual(JSON.parse(JSON.stringify(result.ideas)), [{ area: 'renk', title: 'Sıcak tonlar', detail: 'Yastıklarda hardal.' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.ideas)), [{ phase: 'sonra', area: 'renk', title: 'Sıcak tonlar', detail: 'Yastıklarda hardal.' }]);
   assert.ok(!sent[0].system.includes('Çalışma <odası>'));
   assert.match(sent[0].messages[0].content[1].text, /Çalışma <odası>/);
   assert.equal(sent[0].messages[0].content[0].source.data, IMAGE.base64);
@@ -250,13 +253,15 @@ test('suggestRoomIdeas: an unsuitable photo may return no ideas, with a reason i
 
 test('suggestRoomIdeas: malformed or truncated answers are rejected, never half-saved', async () => {
   const bad = [
-    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'sat', title: 'a', detail: 'b' }] }), // per-item verdict, not an area
-    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'diy', title: 'a', detail: 'b' }] }), // DIY is a separate feature now
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ phase: 'sonra', area: 'sat', title: 'a', detail: 'b' }] }), // per-item verdict, not an area
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ phase: 'sonra', area: 'diy', title: 'a', detail: 'b' }] }), // DIY is a separate feature now
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'renk', title: 'a', detail: 'b' }] }), // which section it belongs to is required
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ phase: 'simdi', area: 'renk', title: 'a', detail: 'b' }] }),
     JSON.stringify({ seen: [], summary: '', ideas: [] }),
     JSON.stringify({ summary: 'x', ideas: [] }), // what it saw is required
     JSON.stringify({ seen: [''], summary: 'x', ideas: [] }),
-    JSON.stringify({ seen: [], summary: 'x', ideas: Array.from({ length: 6 }, () => ({ area: 'renk', title: 'a', detail: 'b' })) }),
-    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'renk', title: 'a' }] }),
+    JSON.stringify({ seen: [], summary: 'x', ideas: Array.from({ length: 11 }, () => ({ phase: 'sonra', area: 'renk', title: 'a', detail: 'b' })) }),
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ phase: 'sonra', area: 'renk', title: 'a' }] }),
     'not json',
   ];
   for (const reply of bad) {
@@ -296,4 +301,145 @@ test('store: a table created before "seen" existed gets the column, and old rows
   const store = require('../lib/roomSuggestionStore.cjs').createRoomSuggestionStore(db);
   assert.deepEqual(store.get(1, 'owner').seen, []);
   assert.ok(db.prepare('PRAGMA table_info(room_suggestions)').all().some((c) => c.name === 'seen_json'));
+});
+
+
+test('suggestRoomIdeas: the room goal and story go in the user turn, and "where to start" always comes first', async () => {
+  const { suggestRoomIdeas, sent } = loadSuggestRoomIdeas(JSON.stringify({
+    seen: ['yerde torbalar'],
+    summary: 'Eski atölye.',
+    ideas: [
+      { phase: 'sonra', area: 'yerlesim', title: 'Masayı pencereye dik koy', detail: 'Ekran yansımasın.' },
+      { phase: 'baslangic', area: 'ayiklama', title: 'Kapı önünü aç', detail: 'İlk 15 dakika.', how: ['Torbaları kapının yanına taşı'], time: '15 dakika' },
+      { phase: 'baslangic', area: 'ayiklama', title: 'Kartonları ayır', detail: 'Geri dönüşüme.', how: ['Yassıla', 'Üst üste koy'], time: '20 dakika' },
+    ],
+  }));
+  const result = await suggestRoomIdeas(IMAGE, { name: 'Atölye', goal: 'seramik stüdyosu', story: 'eskiden mixed media atölyesiydi' });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.ideas.map((idea) => idea.title))), ['Kapı önünü aç', 'Kartonları ayır', 'Masayı pencereye dik koy']);
+  const text = sent[0].messages[0].content[1].text;
+  assert.match(text, /Kullanıcının bu oda için hedefi: seramik stüdyosu/);
+  assert.match(text, /Odanın hikâyesi: eskiden mixed media atölyesiydi/);
+  assert.ok(!sent[0].system.includes('seramik stüdyosu') && !sent[0].system.includes('mixed media atölyesiydi'), 'user text never enters the system prompt');
+
+  const { suggestRoomIdeas: withoutGoal, sent: sent2 } = loadSuggestRoomIdeas(JSON.stringify({ seen: [], summary: 'x', ideas: [] }));
+  await withoutGoal(IMAGE, { name: 'Salon', goal: null, story: null });
+  assert.match(sent2[0].messages[0].content[1].text, /bir hedef yazmadı/);
+});
+
+test('route: the room goal is read from the room and kept with the suggestion it shaped', async t => {
+  const f = fixture(t);
+  f.api.setRoomGoal(f.roomId, 'owner', { goal: 'dijital atölye', story: 'eskiden mixed media atölyesiydi' });
+  const { res, calls } = await postSuggestion(f, f.roomId, { photoId: f.photoId, goal: 'istemciden gelen başka hedef' });
+  assert.equal(res.status, 200);
+  assert.equal(calls.lastArgs[1].goal, 'dijital atölye', 'from the owned room row, never from the request body');
+  assert.equal(res.body.goal, 'dijital atölye');
+  f.api.setRoomGoal(f.roomId, 'owner', { goal: 'misafir odası', story: '' });
+  assert.equal(f.api.roomSuggestions.get(res.body.id, 'owner').goal, 'dijital atölye', 'a later goal change never rewrites an old suggestion');
+});
+
+test('room goal route: owner can set and clear it; others and bad input are refused', async t => {
+  const f = fixture(t);
+  const code = fs.readFileSync(path.join(__dirname, '../app/api/rooms/[id]/route.js'), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+  const load = (owner) => {
+    const ctx = {
+      console, NextResponse: FakeNextResponse,
+      getIdentity: async () => (owner ? { id: owner } : null),
+      getRoomDetail: f.api.getRoomDetail, updateRoomBrief: f.api.updateRoomBrief, ROOM_BRIEF_LIMITS: f.api.ROOM_BRIEF_LIMITS,
+    };
+    vm.createContext(ctx);
+    vm.runInContext(code + ';globalThis.__patch = PATCH;', ctx);
+    return (body) => ctx.__patch({ json: async () => body }, { params: Promise.resolve({ id: String(f.roomId) }) });
+  };
+  const owner = load('owner');
+  const saved = await owner({ goal: '  dijital atölye  ', story: 'eski atölye' });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.goal, 'dijital atölye');
+  assert.equal(f.api.getRoomDetail(f.roomId, 'owner').story, 'eski atölye');
+  assert.equal((await owner({ goal: '', story: '' })).body.goal, null, 'empty text clears the field');
+  assert.equal((await owner({ goal: 42 })).status, 400);
+  assert.equal((await owner({ goal: 'x'.repeat(201) })).status, 400, 'too long is refused, not silently cut');
+  assert.equal((await load('stranger')({ goal: 'başkasının odası' })).status, 404);
+  assert.equal(f.api.getRoomDetail(f.roomId, 'owner').goal, null);
+  assert.equal((await load(null)({ goal: 'x' })).status, 401);
+});
+
+
+test('suggestRoomIdeas: a start step must say how and how long; several photos of one room are sent together', async () => {
+  for (const bad of [
+    { phase: 'baslangic', area: 'ayiklama', title: 'Topla', detail: 'x', time: '10 dakika' }, // no how
+    { phase: 'baslangic', area: 'ayiklama', title: 'Topla', detail: 'x', how: [], time: '10 dakika' },
+    { phase: 'baslangic', area: 'ayiklama', title: 'Topla', detail: 'x', how: ['a'] }, // no time
+    { phase: 'baslangic', area: 'ayiklama', title: 'Topla', detail: 'x', how: ['a', 'b', 'c', 'd', 'e', 'f'], time: '1 saat' },
+  ]) {
+    const { suggestRoomIdeas } = loadSuggestRoomIdeas(JSON.stringify({ seen: [], summary: 'x', ideas: [bad] }));
+    await assert.rejects(suggestRoomIdeas(IMAGE, 'Salon'), /invalid_room_ideas/, JSON.stringify(bad));
+  }
+
+  const { suggestRoomIdeas, sent } = loadSuggestRoomIdeas(JSON.stringify({
+    seen: ['yerde karton'], missing: '  Sağ köşedeki rafların içi görünmüyor; oradan bir fotoğraf ekler misin?  ', summary: 'x',
+    ideas: [{ phase: 'baslangic', area: 'ayiklama', title: 'Kartonlar', detail: 'x', how: [' Yassıla '], time: ' 20 dakika ' }],
+  }));
+  const result = await suggestRoomIdeas([IMAGE, { base64: 'aWtpbmNp', mediaType: 'image/png' }], 'Salon');
+  assert.equal(result.missing, 'Sağ köşedeki rafların içi görünmüyor; oradan bir fotoğraf ekler misin?');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.ideas[0].how)), ['Yassıla']);
+  assert.equal(result.ideas[0].time, '20 dakika');
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0].messages[0].content.filter((block) => block.type === 'image').map((block) => block.source.data))), ['aGVsbG8=', 'aWtpbmNp']);
+  await assert.rejects(suggestRoomIdeas([IMAGE, IMAGE, IMAGE, IMAGE, IMAGE], 'Salon'), /invalid_image/, 'at most four photos');
+});
+
+test('route: the chosen photo goes first, the room\'s other photos follow, and "missing" is saved', async t => {
+  const f = fixture(t);
+  const second = f.api.creations.photo('owner', f.roomId, 'second-photo', Buffer.from('second-bytes'), 'image/png');
+  const { res, calls } = await postSuggestion(f, f.roomId, { photoId: second.id }, {
+    suggestRoomIdeas: async () => ({ ...IDEAS, missing: 'Dolabın içi görünmüyor.' }),
+  });
+  assert.equal(res.status, 200);
+  const sentBytes = calls.lastArgs[0].map((image) => Buffer.from(image.base64, 'base64').toString());
+  assert.deepEqual(JSON.parse(JSON.stringify(sentBytes)), ['second-bytes', 'fake-jpeg-bytes']);
+  assert.equal(res.body.sourcePhotoId, second.id);
+  assert.equal(f.api.roomSuggestions.get(res.body.id, 'owner').missing, 'Dolabın içi görünmüyor.');
+});
+
+
+test('room brief: saving a correction never clears the goal, and the goal form never clears corrections', async t => {
+  const f = fixture(t);
+  f.api.updateRoomBrief(f.roomId, 'owner', { goal: 'dijital atölye', story: 'eski atölye' });
+  f.api.updateRoomBrief(f.roomId, 'owner', { corrections: 'öndeki koyu şey monitör değil, harici diskler' });
+  let detail = f.api.getRoomDetail(f.roomId, 'owner');
+  assert.equal(detail.goal, 'dijital atölye');
+  assert.equal(detail.corrections, 'öndeki koyu şey monitör değil, harici diskler');
+  f.api.setRoomGoal(f.roomId, 'owner', { goal: 'stüdyo', story: '' });
+  detail = f.api.getRoomDetail(f.roomId, 'owner');
+  assert.equal(detail.goal, 'stüdyo');
+  assert.equal(detail.story, null);
+  assert.equal(detail.corrections, 'öndeki koyu şey monitör değil, harici diskler');
+  assert.equal(f.api.updateRoomBrief(f.roomId, 'stranger', { corrections: 'x' }), null);
+});
+
+test('route: corrections are read from the room, reach the AI, and are kept with the suggestion', async t => {
+  const f = fixture(t);
+  f.api.updateRoomBrief(f.roomId, 'owner', { corrections: 'öndeki koyu şey monitör değil, harici diskler' });
+  const { res, calls } = await postSuggestion(f, f.roomId, { photoId: f.photoId });
+  assert.equal(calls.lastArgs[1].corrections, 'öndeki koyu şey monitör değil, harici diskler');
+  assert.equal(f.api.roomSuggestions.get(res.body.id, 'owner').corrections, 'öndeki koyu şey monitör değil, harici diskler');
+});
+
+test('suggestRoomIdeas and suggestIdeaPlan: corrections go in the user turn, never the system prompt', async () => {
+  const { suggestRoomIdeas, sent } = loadSuggestRoomIdeas(JSON.stringify({ seen: [], summary: 'x', ideas: [] }));
+  await suggestRoomIdeas(IMAGE, { name: 'Atölye', corrections: 'mor kutu değil, çekmeceli dolap' });
+  assert.match(sent[0].messages[0].content[1].text, /yanlış gördüklerine dair düzeltmeleri: mor kutu değil, çekmeceli dolap/);
+  assert.ok(!sent[0].system.includes('mor kutu değil'));
+
+  const code = fs.readFileSync(path.join(__dirname, '../lib/anthropic.js'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+  const planSent = [];
+  function FakeAnthropic() {
+    this.messages = { create: async (request) => { planSent.push(request); return { content: [{ type: 'text', text: JSON.stringify({ steps: ['a'], needs: [], difficulty: 'kolay', time: '5 dakika', budget: 'Bütçe gerekmez' }) }], stop_reason: 'end_turn' }; } };
+    this.beta = { messages: this.messages };
+  }
+  const ctx = { Anthropic: FakeAnthropic, roomItemSources: {}, MAX_ROOM_PHOTOS: 6, SESTIA_VOICE_COMPASS: 'x', chatContext: require('../lib/chatContext.cjs'), process: { env: { ANTHROPIC_API_KEY: 'test', ANTHROPIC_MODEL: 'test' } }, console };
+  vm.createContext(ctx);
+  vm.runInContext(code + ';globalThis.__plan = suggestIdeaPlan;', ctx);
+  await ctx.__plan(IMAGE, 'Atölye', { seen: [], corrections: 'mor kutu değil, çekmeceli dolap', ideas: [{ title: 'a', detail: 'b' }] }, 0);
+  assert.match(planSent[0].messages[0].content[1].text, /düzeltmeleri: mor kutu değil, çekmeceli dolap/);
 });

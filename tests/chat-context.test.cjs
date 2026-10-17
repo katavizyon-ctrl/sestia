@@ -123,7 +123,7 @@ test('room_suggestion: only the suggestion id is accepted; room, photo and ideas
   assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, roomId: 7 }), false, 'roomId is derived, never sent');
   assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, ideas: [] }), false, 'ideas are derived, never sent');
 
-  const suggestion = { id: 4, roomId: 7, sourcePhotoId: 22, seen: ['köşede boş sehpa'], summary: 'Aydınlık.', ideas: [{ area: 'ayiklama', title: 'Masayı boşalt', detail: 'Kağıtları kutuya.' }] };
+  const suggestion = { id: 4, roomId: 7, sourcePhotoId: 22, goal: 'dijital atölye', story: 'eski atölye', corrections: 'öndeki şey harici disk', seen: ['köşede boş sehpa'], summary: 'Aydınlık.', ideas: [{ area: 'ayiklama', title: 'Masayı boşalt', detail: 'Kağıtları kutuya.' }] };
   const deps = {
     ...fakeDeps({ rooms: { owner: [7] } }),
     getRoomSuggestion: (id, deviceId) => (id === 4 && deviceId === 'owner' ? suggestion : null),
@@ -140,6 +140,9 @@ test('room_suggestion: only the suggestion id is accepted; room, photo and ideas
   assert.match(text, /Room 7/);
   assert.match(text, /1\) \[Ayıklama\] Masayı boşalt — Kağıtları kutuya\./);
   assert.match(text, /- köşede boş sehpa/, 'what Sestia said it saw is in the context, so a correction can refer to it');
+  assert.match(text, /hedefi: dijital atölye/);
+  assert.match(text, /hikâyesi: eski atölye/);
+  assert.match(text, /düzeltmeleri \(fotoğraftaki görüntüden önce gelir\): öndeki şey harici disk/);
 });
 
 test('room_suggestion with ideaIndex: focuses one idea and its plan, read from the owned row', () => {

@@ -997,10 +997,50 @@ function PageInner() {
     setSuggestionError(null);
     // setView, goTo değil: goTo suggestionRequestRef'i temizler.
     setView('room-suggestions');
-    if (roomDetail.photos.length === 1) { submitSuggestion(roomDetail.photos[0].id); return; }
+    // Önce "Bu oda ne olacak?" teyidi (odadaki hedef hazır dolu gelir).
     suggestionRequestRef.current = null;
     setSuggestionPhotoId(null);
-    setSuggestionStatus('select');
+    setSuggestionStatus('goal');
+  }
+
+  // Odanın hedefini/hikâyesini kaydeder; boş metin alanı temizler.
+  async function saveRoomGoal(goal, story) {
+    if (!roomDetail) return false;
+    const roomId = roomDetail.id;
+    const res = await fetch(`/api/rooms/${roomId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal, story }),
+    }).catch(() => null);
+    if (!res?.ok) return false;
+    const saved = await res.json();
+    setRoomDetail((prev) => (prev && prev.id === roomId ? { ...prev, goal: saved.goal, story: saved.story } : prev));
+    return true;
+  }
+
+  // "Gördüklerim"deki düzeltme odaya kaydedilir (yalnızca bu alan) ve öneriler
+  // düzeltmeyle yeniden hazırlanır. Sonraki tüm öneri, plan ve sohbetler onu
+  // fotoğraftaki görüntüden önce kabul eder.
+  async function saveCorrectionsAndRefresh(corrections) {
+    if (!roomDetail || !suggestion) return false;
+    const roomId = roomDetail.id;
+    const res = await fetch(`/api/rooms/${roomId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corrections }),
+    }).catch(() => null);
+    if (!res?.ok) return false;
+    const saved = await res.json();
+    setRoomDetail((prev) => (prev && prev.id === roomId ? { ...prev, corrections: saved.corrections } : prev));
+    submitSuggestion(suggestion.sourcePhotoId);
+    return true;
+  }
+
+  // Hedef teyit edildi (değiştiyse önce odaya kaydedilir), sonra fotoğraf.
+  async function continueSuggestions(goal, story) {
+    if (!roomDetail) return false;
+    if (goal !== (roomDetail.goal || '') || story !== (roomDetail.story || '')) {
+      if (!(await saveRoomGoal(goal, story))) return false;
+    }
+    // Sunucu odanın tüm fotoğraflarına bakar; ilk fotoğraf kapak ve görsel kaynağıdır.
+    submitSuggestion(roomDetail.photos[0].id);
+    return true;
   }
 
   // Tek AI çağrısı, yalnızca açık bir dokunuştan. Başarılı sonuç odanın
@@ -1113,24 +1153,42 @@ function PageInner() {
     else goTo('room-detail');
   }
 
-  async function addIdeaTodo() {
-    if (!roomDetail || !ideaState?.data || todoBusy) return;
-    const { suggestionId, ideaIndex } = ideaState;
+  // Bir öneriyi (ya da adımı) odanın yapılacaklarına ekler; zaten varsa
+  // sunucu aynı kaydı döndürür. Başarıda eklenen kaydı döner.
+  async function addTodoFor(suggestionId, ideaIndex) {
+    if (!roomDetail) return null;
     const roomId = roomDetail.id;
+    const res = await fetch(`/api/rooms/${roomId}/suggestions/${suggestionId}/ideas/${ideaIndex}/todo`, { method: 'POST' }).catch(() => null);
+    if (!res?.ok) return null;
+    const todo = await res.json();
+    setRoomDetail((prev) => (prev && prev.id === roomId
+      ? { ...prev, todos: [...(prev.todos || []).filter((t) => t.id !== todo.id), todo] } : prev));
+    setIdeaState((prev) => (prev && prev.suggestionId === suggestionId && prev.ideaIndex === ideaIndex && prev.data
+      ? { ...prev, data: { ...prev.data, todo } } : prev));
+    return todo;
+  }
+
+  async function addIdeaTodo() {
+    if (!ideaState?.data || todoBusy) return;
     setTodoBusy(true);
-    try {
-      const res = await fetch(`/api/rooms/${roomId}/suggestions/${suggestionId}/ideas/${ideaIndex}/todo`, { method: 'POST' });
-      if (!res.ok) throw new Error('todo_failed');
-      const todo = await res.json();
-      setIdeaState((prev) => (prev && prev.suggestionId === suggestionId && prev.ideaIndex === ideaIndex && prev.data
-        ? { ...prev, data: { ...prev.data, todo } } : prev));
-      setRoomDetail((prev) => (prev && prev.id === roomId
-        ? { ...prev, todos: [...(prev.todos || []).filter((t) => t.id !== todo.id), todo] } : prev));
-    } catch {
-      setIdeaState((prev) => (prev ? { ...prev, todoError: 'Yapılacaklara eklenemedi. Tekrar dener misin?' } : prev));
-    } finally {
-      setTodoBusy(false);
+    const todo = await addTodoFor(ideaState.suggestionId, ideaState.ideaIndex);
+    if (!todo) setIdeaState((prev) => (prev ? { ...prev, todoError: 'Yapılacaklara eklenemedi. Tekrar dener misin?' } : prev));
+    setTodoBusy(false);
+  }
+
+  // Öneri ekranından: tek adım ya da "Tüm adımları yapılacaklara ekle" (sırayla,
+  // böylece liste adımların sırasını korur).
+  async function addSuggestionTodos(ideaIndexes) {
+    if (!suggestion || todoBusy) return;
+    setTodoBusy(true);
+    setSuggestionError(null);
+    for (const ideaIndex of ideaIndexes) {
+      if (!(await addTodoFor(suggestion.id, ideaIndex))) {
+        setSuggestionError('Yapılacaklara eklenemedi. Tekrar dener misin?');
+        break;
+      }
     }
+    setTodoBusy(false);
   }
 
   async function toggleTodo(todo) {
@@ -1765,6 +1823,7 @@ function PageInner() {
           onToparlaHere={startToparlaInRoom}
           onSuggestHere={startSuggestionsInRoom}
           onViewSuggestion={openSavedSuggestion}
+          onSaveGoal={saveRoomGoal}
           onToggleTodo={toggleTodo}
           onRemoveTodo={removeTodo}
           onOpenTodo={(todo) => openIdea(todo.suggestionId, todo.ideaIndex, 'room-detail')}
@@ -1803,6 +1862,11 @@ function PageInner() {
           onRetry={() => suggestionRetryRef.current?.()}
           onAgain={() => submitSuggestion(suggestionPhotoId)}
           onOpenIdea={(ideaIndex) => suggestion && openIdea(suggestion.id, ideaIndex, 'room-suggestions')}
+          onContinueWithGoal={continueSuggestions}
+          todos={(roomDetail?.todos || []).filter((todo) => todo.suggestionId === suggestion?.id)}
+          todoBusy={todoBusy}
+          onAddTodos={addSuggestionTodos}
+          onSaveCorrections={saveCorrectionsAndRefresh}
           onRequireAccount={requireAccountFlow}
         />
       )}
@@ -2265,7 +2329,8 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo, onSaveGoal }) {
+  const [editingGoal, setEditingGoal] = useState(false);
   return (
     <section className="view">
       <div className="scroll sestia-room-detail">
@@ -2294,6 +2359,30 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                 ))}
               </div>
             )}
+
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {editingGoal ? (
+                <RoomGoalForm
+                  initialGoal={room.goal}
+                  initialStory={room.story}
+                  submitLabel="Kaydet"
+                  onSubmit={async (goal, story) => { const ok = await onSaveGoal(goal, story); if (ok) setEditingGoal(false); return ok; }}
+                  onCancel={() => setEditingGoal(false)}
+                />
+              ) : (
+                <>
+                  <div className="label" style={{ color: 'var(--text-muted)' }}>Bu odanın hedefi</div>
+                  {room.goal
+                    ? <div style={{ fontWeight: 600, fontSize: 15 }}>{room.goal}</div>
+                    : <div className="muted">Bu oda ne olacak? Yazarsan önerilerim ona göre şekillenir.</div>}
+                  {room.story && <div className="muted" style={{ lineHeight: 1.45 }}>{room.story}</div>}
+                  {room.corrections && <div className="muted" style={{ lineHeight: 1.45 }}>Düzeltmelerin: {room.corrections}</div>}
+                  <button type="button" className="sestia-text-link" style={{ alignSelf: 'flex-start' }} onClick={() => setEditingGoal(true)}>
+                    {room.goal || room.story ? 'Düzenle' : 'Hedef ekle'}
+                  </button>
+                </>
+              )}
+            </div>
 
             {room.scan && (
               <div className="card" style={{ background: 'var(--eucalyptus-tint)', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -2534,7 +2623,8 @@ function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPho
 // "Bana öneri ver" — odayı iyileştirmeye dönük fikirler (yerleşim, renk, ışık,
 // dekor, depolama, kendin yap) ve onlar hakkında kaydedilen bir sohbet.
 // Ayıklama kararı yok; o "Odaya birlikte bakalım"ın işi.
-function SuggestionsView({ room, photoId, status, suggestion, error, identityType, onBack, onSelectPhoto, onRetry, onAgain, onOpenIdea, onRequireAccount }) {
+function SuggestionsView({ room, photoId, status, suggestion, error, identityType, onBack, onSelectPhoto, onRetry, onAgain, onOpenIdea, onContinueWithGoal, todos = [], todoBusy, onAddTodos, onSaveCorrections, onRequireAccount }) {
+  const [correcting, setCorrecting] = useState(false);
   if (!room) return <section className="view"><div className="scroll"><Header onBack={onBack} /><div className="thinking"><div className="spinner" /></div></div></section>;
 
   const photoUrl = (id) => `/api/rooms/${room.id}/photos/${id}`;
@@ -2546,6 +2636,15 @@ function SuggestionsView({ room, photoId, status, suggestion, error, identityTyp
           <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
           <h2 style={{ fontSize: 19, fontWeight: 600 }}>Bana öneri ver</h2>
         </div>
+
+        {status === 'goal' && (
+          <>
+            <PageHeading title="Bu oda ne olacak?" center>Hedefini ve istersen hikâyesini yaz; önerilerimi buna göre hazırlarım. Odanın tüm fotoğraflarına bakarım — farklı açılardan fotoğraf eklersen daha iyi görürüm.</PageHeading>
+            <div className="card">
+              <RoomGoalForm initialGoal={room.goal} initialStory={room.story} submitLabel="Önerileri hazırla" onSubmit={onContinueWithGoal} />
+            </div>
+          </>
+        )}
 
         {status === 'select' && (
           <>
@@ -2583,30 +2682,86 @@ function SuggestionsView({ room, photoId, status, suggestion, error, identityTyp
                 <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {suggestion.seen.map((item, i) => <li key={i} className="muted" style={{ fontSize: 13.5 }}>{item}</li>)}
                 </ul>
-                <div className="muted" style={{ fontSize: 12.5 }}>Yanlış gördüğüm bir şey varsa aşağıda söyle, önerimi ona göre düzeltirim.</div>
-              </div>
-            )}
-            <PageHeading title={suggestion.ideas.length ? 'Bu oda için fikirlerim' : 'Bu fotoğrafla fikir veremedim'}>{suggestion.summary}</PageHeading>
-            {suggestion.ideas.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {suggestion.ideas.map((idea, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className="card"
-                    onClick={() => onOpenIdea(i)}
-                    style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', width: '100%', cursor: 'pointer', color: 'inherit' }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <div className="label">{SUGGESTION_AREA_LABELS[idea.area] || idea.area}</div>
-                      <div style={{ fontWeight: 600, fontSize: 15 }}>{idea.title}</div>
-                      <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.45 }}>{idea.detail}</div>
-                    </div>
-                    <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+                {suggestion.missing && (
+                  <>
+                    <div className="label" style={{ color: 'var(--text-muted)', marginTop: 6 }}>Göremediklerim</div>
+                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.45 }}>{suggestion.missing}</div>
+                  </>
+                )}
+                {suggestion.corrections && !correcting && (
+                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>Düzeltmelerin: {suggestion.corrections}</div>
+                )}
+                {correcting ? (
+                  <CorrectionForm
+                    initial={room.corrections}
+                    onSubmit={async (text) => { const ok = await onSaveCorrections(text); if (ok) setCorrecting(false); return ok; }}
+                    onCancel={() => setCorrecting(false)}
+                  />
+                ) : (
+                  <button type="button" className="sestia-text-link" style={{ alignSelf: 'flex-start' }} onClick={() => setCorrecting(true)}>
+                    Yanlış gördüğüm bir şey mi var? Düzelt
                   </button>
-                ))}
+                )}
               </div>
             )}
+            {suggestion.goal && <div className="muted">Hedef: <span style={{ fontWeight: 600, color: 'var(--text)' }}>{suggestion.goal}</span></div>}
+            <PageHeading title={suggestion.ideas.length ? 'Bu oda için fikirlerim' : 'Bu fotoğrafla fikir veremedim'}>{suggestion.summary}</PageHeading>
+            {/* Yeni öneriler iki bölüm (phase); eskiler tek liste. Kartın üst
+                kısmına dokununca önerinin asıl sırası (index) ile detay açılır;
+                adımlar "nasıl"ı ve yapılacaklara ekleme düğmesini kartta gösterir. */}
+            {(() => {
+              const todoByIdea = new Map(todos.map((todo) => [todo.ideaIndex, todo]));
+              const stepIndexes = suggestion.ideas.map((idea, index) => (idea.phase === 'baslangic' ? index : -1)).filter((index) => index >= 0);
+              const missingSteps = stepIndexes.filter((index) => !todoByIdea.has(index));
+              return [
+                ['baslangic', 'Nereden başlamalı', true],
+                ['sonra', 'Topladıktan sonra', false],
+                [undefined, null, false],
+              ].map(([phase, heading, numbered]) => {
+                const items = suggestion.ideas.map((idea, index) => ({ idea, index })).filter(({ idea }) => idea.phase === phase);
+                if (!items.length) return null;
+                return (
+                  <div key={phase || 'all'} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {heading && <div className="label" style={{ color: 'var(--text-muted)' }}>{heading}</div>}
+                    {phase === 'baslangic' && error && <p className="muted" role="status">{error}</p>}
+                    {phase === 'baslangic' && (
+                      <button className="btn-outline" onClick={() => onAddTodos(missingSteps)} disabled={todoBusy || !missingSteps.length}>
+                        <CheckIcon style={{ width: 18, height: 18 }} /> {missingSteps.length ? (todoBusy ? 'Ekleniyor…' : 'Tüm adımları yapılacaklara ekle') : 'Tüm adımlar yapılacaklarda'}
+                      </button>
+                    )}
+                    {items.map(({ idea, index }, order) => {
+                      const todo = todoByIdea.get(index);
+                      return (
+                        <div key={index} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => onOpenIdea(index)}
+                            style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', width: '100%', cursor: 'pointer', color: 'inherit', background: 'none', border: 0, padding: 0 }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <div className="label">{numbered ? `${order + 1}. adım · ` : ''}{SUGGESTION_AREA_LABELS[idea.area] || idea.area}{idea.time ? ` · ${idea.time}` : ''}</div>
+                              <div style={{ fontWeight: 600, fontSize: 15 }}>{idea.title}</div>
+                              <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.45 }}>{idea.detail}</div>
+                            </div>
+                            <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+                          </button>
+                          {Array.isArray(idea.how) && idea.how.length > 0 && (
+                            <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13.5, lineHeight: 1.45 }}>
+                              {idea.how.map((step, i) => <li key={i}>{step}</li>)}
+                            </ol>
+                          )}
+                          {phase === 'baslangic' && (
+                            <button type="button" className="sestia-text-link" style={{ alignSelf: 'flex-start' }} onClick={() => onAddTodos([index])} disabled={todoBusy || !!todo}>
+                              {todo ? (todo.done ? '✓ Yapıldı' : '✓ Yapılacaklarda') : 'Yapılacaklara ekle'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })()}
             <button className="btn-outline" onClick={onAgain} disabled={!photoId}>
               <LightbulbIcon style={{ width: 18, height: 18 }} /> Başka fikirler iste
             </button>
@@ -2626,6 +2781,62 @@ function SuggestionsView({ room, photoId, status, suggestion, error, identityTyp
         )}
       </div>
     </section>
+  );
+}
+
+// "Bu oda ne olacak?" formu — oda sayfasında düzenleme ve öneri öncesi teyit
+// için ortak. onSubmit(goal, story) başarıda true döner.
+function RoomGoalForm({ initialGoal, initialStory, submitLabel, onSubmit, onCancel }) {
+  const [goal, setGoal] = useState(initialGoal || '');
+  const [story, setStory] = useState(initialStory || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function submit(event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const ok = await onSubmit(goal.trim(), story.trim());
+    setBusy(false);
+    if (!ok) setError('Kaydedilemedi. Tekrar dener misin?');
+  }
+  return (
+    <form className="sestia-room-create" onSubmit={submit}>
+      <label htmlFor="room-goal">Bu oda ne olacak?</label>
+      <input id="room-goal" maxLength={200} value={goal} onChange={(e) => setGoal(e.target.value)} disabled={busy} placeholder="Örneğin: dijital atölye" />
+      <label htmlFor="room-story">Hikâyesi (isteğe bağlı)</label>
+      <textarea id="room-story" rows={3} maxLength={600} value={story} onChange={(e) => setStory(e.target.value)} disabled={busy}
+        placeholder="Ne için kullanılıyordu, neden bu hâle geldi?" />
+      {error && <div className="errbox" role="alert">{error}</div>}
+      <button className="btn-primary" type="submit" disabled={busy}>{busy ? 'Kaydediliyor…' : submitLabel}<ChevronRightIcon /></button>
+      {onCancel && <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>Vazgeç</button>}
+    </form>
+  );
+}
+
+// "Gördüklerim"deki düzeltme formu. onSubmit(text) başarıda true döner.
+function CorrectionForm({ initial, onSubmit, onCancel }) {
+  const [text, setText] = useState(initial || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function submit(event) {
+    event.preventDefault();
+    if (busy || !text.trim()) return;
+    setBusy(true);
+    setError(null);
+    const ok = await onSubmit(text.trim());
+    setBusy(false);
+    if (!ok) setError('Kaydedilemedi. Tekrar dener misin?');
+  }
+  return (
+    <form className="sestia-room-create" onSubmit={submit}>
+      <label htmlFor="room-corrections">Neyi yanlış gördüm?</label>
+      <textarea id="room-corrections" rows={3} maxLength={600} value={text} onChange={(e) => setText(e.target.value)} disabled={busy}
+        placeholder="Örneğin: öndeki koyu şey monitör değil, harici diskler." />
+      {error && <div className="errbox" role="alert">{error}</div>}
+      <button className="btn-primary" type="submit" disabled={busy || !text.trim()}>{busy ? 'Kaydediliyor…' : 'Kaydet ve önerileri yenile'}<ChevronRightIcon /></button>
+      <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>Vazgeç</button>
+    </form>
   );
 }
 
