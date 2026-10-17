@@ -11,7 +11,7 @@ const vm = require('node:vm');
 // anything but a harmless placeholder string.
 function loadAnthropicModule() {
   const state = { impl: null };
-  function FakeAnthropic() { this.messages = { create: (...args) => state.impl(...args) }; }
+  function FakeAnthropic() { this.messages = { create: (...args) => state.impl(...args) }; this.beta = { messages: this.messages }; }
   const code = fs.readFileSync(path.join(__dirname, '../lib/anthropic.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const ctx = {

@@ -19,7 +19,7 @@ function client(fetch) {
     roomPhotosRef: { current: [] }, roomRequestRef: { current: null }, roomLeaseRef: { current: null }, roomSessionRef: { current: 0 }, roomFilesRef: { current: [] },
     roomPhotoVersionRef: { current: 0 }, roomCoverageRequestRef: { current: null }, roomUploadsRef: { current: new Map() },
     roomAnalysisPhotosRef: { current: [] }, roomSaveFlowRef: { current: null }, roomCreateOperationRef: { current: null }, roomDetailRequestRef: { current: null },
-    toparlaRequestRef: { current: null }, toparlaOperationRef: { current: null }, suggestionRequestRef: { current: null },
+    toparlaRequestRef: { current: null }, toparlaOperationRef: { current: null }, suggestionRequestRef: { current: null }, ideaRequestRef: { current: null },
     roomExistingLoadRef: { current: null },
     rooms: [], view: 'room-detail', roomDraftDirty: false, roomItems: [], roomMessages: [], roomPhotos: [],
     roomExistingPick: null, roomExistingRetry: null,

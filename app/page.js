@@ -28,7 +28,7 @@ import {
 } from '@/components/icons';
 
 const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
-const SUGGESTION_AREA_LABELS = { yerlesim: 'Yerleşim', renk: 'Renk', isik: 'Işık', dekor: 'Dekor', depolama: 'Depolama', diy: 'Kendin yap' };
+const SUGGESTION_AREA_LABELS = { ayiklama: 'Ayıklama', yerlesim: 'Yerleşim', renk: 'Renk', isik: 'Işık', dekor: 'Dekor', depolama: 'Depolama', diy: 'Kendin yap' };
 const SCAN_PERSIST_ERROR = 'Analiz odaya kaydedilemedi — bu oturumda görebilirsin ama sayfa yenilenirse kaybolabilir.';
 
 // SQLite datetime('now') UTC dondurur (Z eki olmadan) — JS Date'in bunu
@@ -230,6 +230,20 @@ function PageInner() {
   // kayıtlı öneriyi açma) tekrarlar.
   const suggestionRetryRef = useRef(null);
 
+  // ---- bir öneriye dokununca: detay, plan, yapılacaklar, görsel ----
+  // ideaState: { suggestionId, ideaIndex, status: loading|planning|ready|error, data, error }
+  const [ideaState, setIdeaState] = useState(null);
+  // Detaydan "Geri" nereye dönsün: öneri ekranından mı, odanın yapılacaklarından mı açıldı.
+  const [ideaReturnView, setIdeaReturnView] = useState('room-suggestions');
+  const [todoBusy, setTodoBusy] = useState(false);
+  // ideaVisual: null | { status: account-gate|confirm|generating|done|error, result?, error? }
+  const [ideaVisual, setIdeaVisual] = useState(null);
+  // goTo temizler: detaydan çıkıldıktan sonra gelen yanıt ekrana yazılmaz.
+  const ideaRequestRef = useRef(null);
+  // Ücretli görsel çağrısı için operationKey; yalnızca "Görseli oluştur" ile
+  // üretilir, çift dokunma ya da tekrar gönderim ikinci bir ücretli çağrı açmaz.
+  const ideaVisualOperationRef = useRef(null);
+
   useEffect(() => {
     logEvent('session_start');
     refreshHomeState(true);
@@ -338,6 +352,7 @@ function PageInner() {
     roomDetailRequestRef.current = null;
     toparlaRequestRef.current = null;
     suggestionRequestRef.current = null;
+    ideaRequestRef.current = null;
     setRoomCreating(false);
     if ((view === 'scan' || view === 'decision') && name !== view) resetSingleScan();
     // Also cancel a begin request started from room-detail before navigation.
@@ -364,6 +379,7 @@ function PageInner() {
     if (view === 'room-detail') return goTo('rooms');
     if (view === 'toparla') return goTo('room-detail');
     if (view === 'room-suggestions') return goTo('room-detail');
+    if (view === 'suggestion-idea') return leaveIdea();
     if (view === 'room-analysis') { setHistoryAnalysis(null); setView('room-detail'); return; }
     if (view === 'celebration') return finishCelebration();
     goTo('home');
@@ -1052,6 +1068,131 @@ function PageInner() {
     }
   }
 
+  // Bir öneriye dokunuldu: kayıtlı detay hemen açılır; plan yoksa bir kez
+  // oluşturulur ve kaydedilir (sonraki açılışlarda AI çağrısı yok).
+  async function openIdea(suggestionId, ideaIndex, returnView) {
+    if (!roomDetail) return;
+    const request = {};
+    ideaRequestRef.current = request;
+    ideaVisualOperationRef.current = null;
+    const roomId = roomDetail.id;
+    setIdeaReturnView(returnView);
+    setIdeaVisual(null);
+    setIdeaState({ suggestionId, ideaIndex, status: 'loading', data: null, error: null });
+    setView('suggestion-idea');
+    const base = `/api/rooms/${roomId}/suggestions/${suggestionId}/ideas/${ideaIndex}`;
+    try {
+      let res = await fetch(base);
+      let body = await res.json().catch(() => ({}));
+      if (ideaRequestRef.current !== request) return;
+      if (!res.ok) throw new Error(body.error || 'idea_failed');
+      if (!body.plan) {
+        setIdeaState({ suggestionId, ideaIndex, status: 'planning', data: body, error: null });
+        res = await fetch(base, { method: 'POST' });
+        const planned = await res.json().catch(() => ({}));
+        if (ideaRequestRef.current !== request) return;
+        if (!res.ok) {
+          setIdeaState({ suggestionId, ideaIndex, status: 'error', data: body,
+            error: planned.error === 'photo_too_large' ? 'Bu fotoğraf çok büyük. Daha küçük bir fotoğrafla tekrar dener misin?' : 'Adımlar hazırlanamadı. Tekrar dener misin?' });
+          return;
+        }
+        body = planned;
+      }
+      setIdeaState({ suggestionId, ideaIndex, status: 'ready', data: body, error: null });
+    } catch {
+      if (ideaRequestRef.current === request) {
+        setIdeaState((prev) => ({ ...(prev || { suggestionId, ideaIndex }), status: 'error', error: 'Öneri açılamadı. Tekrar dener misin?' }));
+      }
+    }
+  }
+
+  function leaveIdea() {
+    ideaRequestRef.current = null;
+    // Öneri ekranı hâlâ aynı öneriyi tutuyorsa ona dön; yoksa odaya.
+    if (ideaReturnView === 'room-suggestions' && suggestion && suggestion.id === ideaState?.suggestionId) setView('room-suggestions');
+    else goTo('room-detail');
+  }
+
+  async function addIdeaTodo() {
+    if (!roomDetail || !ideaState?.data || todoBusy) return;
+    const { suggestionId, ideaIndex } = ideaState;
+    const roomId = roomDetail.id;
+    setTodoBusy(true);
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/suggestions/${suggestionId}/ideas/${ideaIndex}/todo`, { method: 'POST' });
+      if (!res.ok) throw new Error('todo_failed');
+      const todo = await res.json();
+      setIdeaState((prev) => (prev && prev.suggestionId === suggestionId && prev.ideaIndex === ideaIndex && prev.data
+        ? { ...prev, data: { ...prev.data, todo } } : prev));
+      setRoomDetail((prev) => (prev && prev.id === roomId
+        ? { ...prev, todos: [...(prev.todos || []).filter((t) => t.id !== todo.id), todo] } : prev));
+    } catch {
+      setIdeaState((prev) => (prev ? { ...prev, todoError: 'Yapılacaklara eklenemedi. Tekrar dener misin?' } : prev));
+    } finally {
+      setTodoBusy(false);
+    }
+  }
+
+  async function toggleTodo(todo) {
+    if (!roomDetail) return;
+    const roomId = roomDetail.id;
+    const res = await fetch(`/api/rooms/${roomId}/todos/${todo.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: !todo.done }),
+    }).catch(() => null);
+    if (!res?.ok) { setRoomDetailError('Yapılacak güncellenemedi. Tekrar dener misin?'); return; }
+    const updated = await res.json();
+    setRoomDetail((prev) => (prev && prev.id === roomId ? { ...prev, todos: (prev.todos || []).map((t) => (t.id === updated.id ? updated : t)) } : prev));
+  }
+
+  async function removeTodo(todo) {
+    if (!roomDetail) return;
+    const roomId = roomDetail.id;
+    const res = await fetch(`/api/rooms/${roomId}/todos/${todo.id}`, { method: 'DELETE' }).catch(() => null);
+    if (!res?.ok) { setRoomDetailError('Yapılacak kaldırılamadı. Tekrar dener misin?'); return; }
+    setRoomDetail((prev) => (prev && prev.id === roomId ? { ...prev, todos: (prev.todos || []).filter((t) => t.id !== todo.id) } : prev));
+  }
+
+  // "Nasıl görünür?" tıklaması hiçbir ücretli çağrı yapmaz: misafire giriş
+  // kapısını, hesaba onay kartını açar. Sunucu da hesabı ayrıca zorunlu tutar.
+  function startIdeaVisual() {
+    ideaVisualOperationRef.current = null;
+    setIdeaVisual({ status: identityType === 'account' ? 'confirm' : 'account-gate' });
+  }
+
+  // Tek ücretli çağrı, yalnızca "Görseli oluştur" dokunuşundan.
+  async function confirmIdeaVisual() {
+    if (!roomDetail || !ideaState?.data) return;
+    const { suggestionId, ideaIndex } = ideaState;
+    const request = ideaRequestRef.current;
+    if (!ideaVisualOperationRef.current || ideaVisualOperationRef.current.suggestionId !== suggestionId || ideaVisualOperationRef.current.ideaIndex !== ideaIndex) {
+      ideaVisualOperationRef.current = { operationKey: crypto.randomUUID(), suggestionId, ideaIndex };
+    }
+    const operation = ideaVisualOperationRef.current;
+    if (operation.pending) return;
+    operation.pending = true;
+    setIdeaVisual({ status: 'generating' });
+    try {
+      const res = await fetch(`/api/rooms/${roomDetail.id}/suggestions/${suggestionId}/ideas/${ideaIndex}/visual`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operationKey: operation.operationKey }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (ideaRequestRef.current !== request) return; // detaydan çıkıldı
+      if (!res.ok || body.status === 'failed') {
+        // Kesin bir ret: bu anahtar bir daha kullanılmaz, yeni deneme yeni anahtar alır.
+        if (!res.ok && res.status >= 400 && res.status < 500 && body.error !== 'already_in_progress') ideaVisualOperationRef.current = null;
+        if (body.status === 'failed') ideaVisualOperationRef.current = null;
+        setIdeaVisual({ status: 'error', error: 'Görsel oluşturulamadı. Tekrar dener misin?' });
+        return;
+      }
+      setIdeaVisual({ status: 'done', result: body });
+      setIdeaState((prev) => (prev && prev.data ? { ...prev, data: { ...prev.data, visual: body } } : prev));
+    } catch {
+      if (ideaRequestRef.current === request) setIdeaVisual({ status: 'error', error: 'Görsel oluşturulamadı. Tekrar dener misin?' });
+    } finally {
+      operation.pending = false;
+    }
+  }
+
   // Odanin daha once tamamlanmis (kalici) bir analizini salt-okunur
   // goruntuler — yeni karar olusturmaz, eski analizi guncellemez.
   function viewRoomAnalysis(analysis) {
@@ -1624,6 +1765,9 @@ function PageInner() {
           onToparlaHere={startToparlaInRoom}
           onSuggestHere={startSuggestionsInRoom}
           onViewSuggestion={openSavedSuggestion}
+          onToggleTodo={toggleTodo}
+          onRemoveTodo={removeTodo}
+          onOpenTodo={(todo) => openIdea(todo.suggestionId, todo.ideaIndex, 'room-detail')}
           toparlaNotice={toparlaNotice}
           onResumeScan={resumeRoomScan}
           onViewAnalysis={viewRoomAnalysis}
@@ -1658,6 +1802,24 @@ function PageInner() {
           onSelectPhoto={submitSuggestion}
           onRetry={() => suggestionRetryRef.current?.()}
           onAgain={() => submitSuggestion(suggestionPhotoId)}
+          onOpenIdea={(ideaIndex) => suggestion && openIdea(suggestion.id, ideaIndex, 'room-suggestions')}
+          onRequireAccount={requireAccountFlow}
+        />
+      )}
+
+      {view === 'suggestion-idea' && (
+        <IdeaView
+          room={roomDetail}
+          state={ideaState}
+          visual={ideaVisual}
+          todoBusy={todoBusy}
+          identityType={identityType}
+          onBack={leaveIdea}
+          onRetry={() => ideaState && openIdea(ideaState.suggestionId, ideaState.ideaIndex, ideaReturnView)}
+          onAddTodo={addIdeaTodo}
+          onStartVisual={startIdeaVisual}
+          onConfirmVisual={confirmIdeaVisual}
+          onCancelVisual={() => setIdeaVisual(null)}
           onRequireAccount={requireAccountFlow}
         />
       )}
@@ -2103,7 +2265,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo }) {
   return (
     <section className="view">
       <div className="scroll sestia-room-detail">
@@ -2188,6 +2350,35 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                       </div>
                       <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)' }} />
                     </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {room.todos && room.todos.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 10 }}>Yapılacaklar</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {room.todos.map((todo) => (
+                    <div key={todo.id} className="card" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 14px' }}>
+                      <button
+                        type="button"
+                        className="iconbtn"
+                        onClick={() => onToggleTodo(todo)}
+                        aria-pressed={todo.done}
+                        aria-label={todo.done ? 'Yapılmadı olarak işaretle' : 'Yapıldı olarak işaretle'}
+                        style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 8, border: '1.5px solid var(--border)', background: todo.done ? 'var(--eucalyptus-tint)' : 'transparent' }}
+                      >
+                        {todo.done && <CheckIcon style={{ width: 16, height: 16, color: 'var(--eucalyptus)' }} />}
+                      </button>
+                      <button type="button" onClick={() => onOpenTodo(todo)} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'inherit' }}>
+                        <div style={{ fontWeight: 600, fontSize: 14, textDecoration: todo.done ? 'line-through' : 'none', opacity: todo.done ? 0.6 : 1 }}>{todo.title}</div>
+                        <div className="muted">{SUGGESTION_AREA_LABELS[todo.area] || todo.area}</div>
+                      </button>
+                      <button type="button" className="iconbtn" onClick={() => onRemoveTodo(todo)} aria-label="Yapılacaklardan kaldır" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                        <CloseIcon style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2343,7 +2534,7 @@ function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPho
 // "Bana öneri ver" — odayı iyileştirmeye dönük fikirler (yerleşim, renk, ışık,
 // dekor, depolama, kendin yap) ve onlar hakkında kaydedilen bir sohbet.
 // Ayıklama kararı yok; o "Odaya birlikte bakalım"ın işi.
-function SuggestionsView({ room, photoId, status, suggestion, error, identityType, onBack, onSelectPhoto, onRetry, onAgain, onRequireAccount }) {
+function SuggestionsView({ room, photoId, status, suggestion, error, identityType, onBack, onSelectPhoto, onRetry, onAgain, onOpenIdea, onRequireAccount }) {
   if (!room) return <section className="view"><div className="scroll"><Header onBack={onBack} /><div className="thinking"><div className="spinner" /></div></div></section>;
 
   const photoUrl = (id) => `/api/rooms/${room.id}/photos/${id}`;
@@ -2386,15 +2577,33 @@ function SuggestionsView({ room, photoId, status, suggestion, error, identityTyp
         {status === 'done' && suggestion && (
           <>
             <img className="sestia-room-hero" src={photoUrl(suggestion.sourcePhotoId)} alt={room.name} />
+            {suggestion.seen?.length > 0 && (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="label" style={{ color: 'var(--text-muted)' }}>Gördüklerim</div>
+                <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {suggestion.seen.map((item, i) => <li key={i} className="muted" style={{ fontSize: 13.5 }}>{item}</li>)}
+                </ul>
+                <div className="muted" style={{ fontSize: 12.5 }}>Yanlış gördüğüm bir şey varsa aşağıda söyle, önerimi ona göre düzeltirim.</div>
+              </div>
+            )}
             <PageHeading title={suggestion.ideas.length ? 'Bu oda için fikirlerim' : 'Bu fotoğrafla fikir veremedim'}>{suggestion.summary}</PageHeading>
             {suggestion.ideas.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {suggestion.ideas.map((idea, i) => (
-                  <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div className="label">{SUGGESTION_AREA_LABELS[idea.area] || idea.area}</div>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{idea.title}</div>
-                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.45 }}>{idea.detail}</div>
-                  </div>
+                  <button
+                    key={i}
+                    type="button"
+                    className="card"
+                    onClick={() => onOpenIdea(i)}
+                    style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', width: '100%', cursor: 'pointer', color: 'inherit' }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div className="label">{SUGGESTION_AREA_LABELS[idea.area] || idea.area}</div>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{idea.title}</div>
+                      <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.45 }}>{idea.detail}</div>
+                    </div>
+                    <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)', flexShrink: 0 }} />
+                  </button>
                 ))}
               </div>
             )}
@@ -2413,6 +2622,154 @@ function SuggestionsView({ room, photoId, status, suggestion, error, identityTyp
               identityType={identityType}
               onRequireAccount={onRequireAccount}
             />
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+const DIFFICULTY_LABELS = { kolay: 'Kolay', orta: 'Orta', zor: 'Zor' };
+
+// Bir öneriye dokununca açılan detay: plan (adımlar, gerekenler, zorluk,
+// süre, bütçe), yapılacaklara ekleme, "Nasıl görünür?" görseli ve yalnızca
+// bu öneri üzerine kaydedilen sohbet.
+function IdeaView({ room, state, visual, todoBusy, identityType, onBack, onRetry, onAddTodo, onStartVisual, onConfirmVisual, onCancelVisual, onRequireAccount }) {
+  const data = state?.data;
+  const idea = data?.idea;
+  const photoUrl = (id) => `/api/rooms/${room?.id}/photos/${id}`;
+  const visualResult = visual?.status === 'done' ? visual.result : (!visual ? data?.visual : null);
+  const chatRef = useRef(null);
+
+  return (
+    <section className="view">
+      <div className="scroll sestia-room-detail">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>{idea ? (SUGGESTION_AREA_LABELS[idea.area] || idea.area) : 'Öneri'}</h2>
+        </div>
+
+        {(!state || state.status === 'loading') && <div className="thinking"><div className="spinner" /></div>}
+
+        {idea && (
+          <>
+            <PageHeading title={idea.title}>{idea.detail}</PageHeading>
+
+            {state.status === 'planning' && (
+              <div className="thinking">
+                <div className="spinner" />
+                <p className="muted">Adımları hazırlıyorum…</p>
+              </div>
+            )}
+
+            {state.status === 'error' && (
+              <>
+                <div className="errbox">{state.error}</div>
+                <button className="btn-primary" onClick={onRetry}>Tekrar dene</button>
+              </>
+            )}
+
+            {data.plan && (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {[['Zorluk', DIFFICULTY_LABELS[data.plan.difficulty] || data.plan.difficulty], ['Süre', data.plan.time], ['Bütçe', data.plan.budget]].map(([label, value]) => (
+                    <div key={label} style={{ background: 'var(--eucalyptus-tint)', borderRadius: 12, padding: '6px 10px', fontSize: 12.5 }}>
+                      <span style={{ fontWeight: 600 }}>{label}:</span> {value}
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div className="label" style={{ marginBottom: 6 }}>Adımlar</div>
+                  <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, lineHeight: 1.45 }}>
+                    {data.plan.steps.map((step, i) => <li key={i}>{step}</li>)}
+                  </ol>
+                </div>
+                {data.plan.needs.length > 0 && (
+                  <div>
+                    <div className="label" style={{ marginBottom: 6 }}>Gerekenler</div>
+                    <ul style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 14 }}>
+                      {data.plan.needs.map((need, i) => <li key={i}>{need}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {state.status !== 'loading' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <button className="btn-outline" onClick={() => chatRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                  <SendIcon style={{ width: 18, height: 18 }} /> Bunu konuşalım
+                </button>
+                <button className="btn-outline" onClick={onAddTodo} disabled={todoBusy || !!data.todo}>
+                  <CheckIcon style={{ width: 18, height: 18 }} /> {data.todo ? 'Yapılacaklarda' : (todoBusy ? 'Ekleniyor…' : 'Yapılacaklara ekle')}
+                </button>
+                {state.todoError && <p className="muted" role="status">{state.todoError}</p>}
+                {!visualResult && (!visual || visual.status === 'error') && (
+                  <button className="btn-outline" onClick={onStartVisual}>
+                    <LayersIcon style={{ width: 18, height: 18 }} /> Nasıl görünür?
+                  </button>
+                )}
+              </div>
+            )}
+
+            {visual?.status === 'account-gate' && (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontWeight: 600 }}>Bunu senin için oluşturabilmem için giriş yapman gerekiyor.</div>
+                <button className="btn-primary" onClick={onRequireAccount}>E-posta ile devam et <ChevronRightIcon /></button>
+                <button className="btn-outline" onClick={onCancelVisual}>Şimdilik değil</button>
+              </div>
+            )}
+
+            {visual?.status === 'confirm' && (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontWeight: 600 }}>Bu öneri uygulanmış hâliyle odanı görelim mi?</div>
+                <div className="muted">Oda, mobilya ve kamera açısı aynı kalır; yalnızca bu öneri uygulanmış gibi görselleştirilir.</div>
+                <button className="btn-primary" onClick={onConfirmVisual}>Görseli oluştur <ChevronRightIcon /></button>
+                <button className="btn-outline" onClick={onCancelVisual}>Vazgeç</button>
+              </div>
+            )}
+
+            {visual?.status === 'generating' && (
+              <div className="thinking">
+                <div className="spinner" />
+                <p className="muted">Odanı bu öneriyle görüyoruz…</p>
+              </div>
+            )}
+
+            {visual?.status === 'error' && <div className="errbox">{visual.error}</div>}
+
+            {visualResult && (
+              <>
+                <PageHeading title="Böyle görünse nasıl olur?" center>Bu önerinin bir görselleştirmesi — odanın gerçek hâli değil.</PageHeading>
+                <BeforeAfterSlider
+                  beforeSrc={photoUrl(data.sourcePhotoId)}
+                  afterSrc={`/api/rooms/${room?.id}/suggestions/${data.suggestionId}/ideas/${data.ideaIndex}/visual/${visualResult.id}`}
+                  width={visualResult.outputWidth}
+                  height={visualResult.outputHeight}
+                />
+              </>
+            )}
+
+            <div ref={chatRef} style={{ scrollMarginTop: 12 }}>
+              {/* key: her önerinin kendi kayıtlı sohbeti; başka bir öneriye geçince taşınmaz. */}
+              <ConversationPanel
+                key={`${data.suggestionId}-${data.ideaIndex}`}
+                productContext={{ kind: 'room_suggestion', roomSuggestionId: data.suggestionId, ideaIndex: data.ideaIndex }}
+                initialMessages={data.messages}
+                emptyStateHeading="Bunu konuşalım"
+                emptyStateCopy="Bir adımı açmamı, daha ucuz bir yolunu ya da başka bir yaklaşımı sorabilirsin."
+                className="sestia-embedded-chat"
+                identityType={identityType}
+                onRequireAccount={onRequireAccount}
+              />
+            </div>
+          </>
+        )}
+
+        {state?.status === 'error' && !idea && (
+          <>
+            <div className="errbox">{state.error}</div>
+            <button className="btn-primary" onClick={onRetry}>Tekrar dene</button>
           </>
         )}
       </div>

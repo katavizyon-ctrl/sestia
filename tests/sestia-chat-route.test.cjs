@@ -34,7 +34,7 @@ function loadApi(db) {
 // below supplies its own chatFreely stub separately, so no live call ever
 // happens here either.
 function realValidChatMessages() {
-  function FakeAnthropic() { this.messages = { create: async () => ({ content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn' }) }; }
+  function FakeAnthropic() { this.messages = { create: async () => ({ content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn' }) }; this.beta = { messages: this.messages }; }
   const code = fs.readFileSync(path.join(__dirname, '../lib/anthropic.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const ctx = {
@@ -310,4 +310,21 @@ test('room_suggestion context: another identity can neither chat about nor write
   assert.equal(res.status, 404);
   assert.equal(calls.chatFreely, 0);
   assert.deepEqual(f.api.roomSuggestions.get(suggestion.id, 'owner').messages, []);
+});
+
+test('room_suggestion with ideaIndex: the conversation is saved under that idea, not the suggestion', async t => {
+  const f = fixture(t);
+  const suggestion = f.api.roomSuggestions.create('owner', f.roomId, f.photoId, {
+    seen: [], summary: 'x', ideas: [{ area: 'ayiklama', title: 'Masayı boşalt', detail: 'Kağıtları kutuya.' }],
+  });
+  const { post, calls } = postChatRoute(f, { chatFreelyImpl: async () => ({ reply: 'Önce kağıtları ayır.', suggestedAction: null }) });
+  const res = await post({ messages: [{ role: 'user', content: 'Nereden başlayayım?' }], context: { kind: 'room_suggestion', roomSuggestionId: suggestion.id, ideaIndex: 0 } });
+  assert.equal(res.status, 200);
+  assert.equal(calls.lastArgs[1].idea.title, 'Masayı boşalt');
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(f.api.roomSuggestions.getIdea(suggestion.id, 0, 'owner').messages), plain(res.body.messages));
+  assert.deepEqual(plain(f.api.roomSuggestions.get(suggestion.id, 'owner').messages), [], 'suggestion-level conversation untouched');
+
+  const missing = await post({ messages: [{ role: 'user', content: 'x' }], context: { kind: 'room_suggestion', roomSuggestionId: suggestion.id, ideaIndex: 4 } });
+  assert.equal(missing.status, 404);
 });

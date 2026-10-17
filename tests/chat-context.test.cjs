@@ -123,7 +123,7 @@ test('room_suggestion: only the suggestion id is accepted; room, photo and ideas
   assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, roomId: 7 }), false, 'roomId is derived, never sent');
   assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, ideas: [] }), false, 'ideas are derived, never sent');
 
-  const suggestion = { id: 4, roomId: 7, sourcePhotoId: 22, summary: 'Aydınlık.', ideas: [{ area: 'isik', title: 'Lamba', detail: 'Köşeye.' }] };
+  const suggestion = { id: 4, roomId: 7, sourcePhotoId: 22, seen: ['köşede boş sehpa'], summary: 'Aydınlık.', ideas: [{ area: 'ayiklama', title: 'Masayı boşalt', detail: 'Kağıtları kutuya.' }] };
   const deps = {
     ...fakeDeps({ rooms: { owner: [7] } }),
     getRoomSuggestion: (id, deviceId) => (id === 4 && deviceId === 'owner' ? suggestion : null),
@@ -138,5 +138,27 @@ test('room_suggestion: only the suggestion id is accepted; room, photo and ideas
 
   const text = chatContext.buildContextSystemText(ok.resolved);
   assert.match(text, /Room 7/);
-  assert.match(text, /1\) \[Işık\] Lamba — Köşeye\./);
+  assert.match(text, /1\) \[Ayıklama\] Masayı boşalt — Kağıtları kutuya\./);
+  assert.match(text, /- köşede boş sehpa/, 'what Sestia said it saw is in the context, so a correction can refer to it');
+});
+
+test('room_suggestion with ideaIndex: focuses one idea and its plan, read from the owned row', () => {
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, ideaIndex: 0 }), true);
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, ideaIndex: -1 }), false);
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, ideaIndex: '0' }), false);
+
+  const suggestion = { id: 4, roomId: 7, sourcePhotoId: 22, seen: [], summary: 'x', ideas: [{ area: 'ayiklama', title: 'Masayı boşalt', detail: 'Kağıtları kutuya.' }] };
+  const plan = { steps: ['Kağıtları ayır', 'Kutuya koy'], needs: ['ayakkabı kutusu'], difficulty: 'kolay', time: '15 dakika', budget: 'Bütçe gerekmez' };
+  const deps = {
+    ...fakeDeps({ rooms: { owner: [7] } }),
+    getRoomSuggestion: (id, deviceId) => (id === 4 && deviceId === 'owner' ? suggestion : null),
+    getRoomSuggestionIdea: (id, ideaIndex, deviceId) => (id === 4 && ideaIndex === 0 && deviceId === 'owner' ? { ideaIndex: 0, idea: suggestion.ideas[0], plan } : null),
+  };
+  const ok = chatContext.resolveContext({ kind: 'room_suggestion', roomSuggestionId: 4, ideaIndex: 0 }, 'owner', deps);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.resolved.ideaIndex, 0);
+  const text = chatContext.buildContextSystemText(ok.resolved);
+  assert.match(text, /ODAK: Kullanıcı şu anda 1\. öneriyi açmış/);
+  assert.match(text, /1\. Kağıtları ayır 2\. Kutuya koy/);
+  assert.deepEqual(chatContext.resolveContext({ kind: 'room_suggestion', roomSuggestionId: 4, ideaIndex: 3 }, 'owner', deps), { ok: false, error: 'idea_not_found' });
 });

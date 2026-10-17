@@ -47,6 +47,7 @@ function fixture(t) {
 }
 
 const IDEAS = {
+  seen: ['pencere önünde krem kanepe', 'sağda boş köşe'],
   summary: 'Pencere tarafı aydınlık, karşı köşe boş kalmış.',
   ideas: [
     { area: 'yerlesim', title: 'Koltuğu pencereye çevir', detail: 'Koltuğu pencerenin önüne al.' },
@@ -96,6 +97,7 @@ test('store: a suggestion can only be created for a room and photo the device ow
   assert.equal(created.roomId, f.roomId);
   assert.equal(created.sourcePhotoId, f.photoId);
   assert.equal(created.summary, IDEAS.summary);
+  assert.deepEqual(created.seen, IDEAS.seen);
   assert.deepEqual(created.ideas, IDEAS.ideas);
   assert.deepEqual(created.messages, []);
 });
@@ -209,6 +211,7 @@ function loadSuggestRoomIdeas(reply, stopReason = 'end_turn') {
   const sent = [];
   function FakeAnthropic() {
     this.messages = { create: async (request) => { sent.push(request); return { content: [{ type: 'text', text: reply }], stop_reason: stopReason }; } };
+    this.beta = { messages: this.messages };
   }
   const code = fs.readFileSync(path.join(__dirname, '../lib/anthropic.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
@@ -226,10 +229,12 @@ const IMAGE = { base64: 'aGVsbG8=', mediaType: 'image/jpeg' };
 
 test('suggestRoomIdeas: a valid answer is trimmed and returned; the room name goes in the user turn, not the system prompt', async () => {
   const { suggestRoomIdeas, sent } = loadSuggestRoomIdeas(JSON.stringify({
+    seen: ['  masada kağıt yığını  '],
     summary: '  Aydınlık bir oda.  ',
     ideas: [{ area: 'renk', title: ' Sıcak tonlar ', detail: ' Yastıklarda hardal. ' }],
   }));
   const result = await suggestRoomIdeas(IMAGE, 'Çalışma <odası>');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.seen)), ['masada kağıt yığını']);
   assert.equal(result.summary, 'Aydınlık bir oda.');
   assert.deepEqual(JSON.parse(JSON.stringify(result.ideas)), [{ area: 'renk', title: 'Sıcak tonlar', detail: 'Yastıklarda hardal.' }]);
   assert.ok(!sent[0].system.includes('Çalışma <odası>'));
@@ -238,23 +243,57 @@ test('suggestRoomIdeas: a valid answer is trimmed and returned; the room name go
 });
 
 test('suggestRoomIdeas: an unsuitable photo may return no ideas, with a reason in the summary', async () => {
-  const { suggestRoomIdeas } = loadSuggestRoomIdeas(JSON.stringify({ summary: 'Fotoğraf çok karanlık.', ideas: [] }));
+  const { suggestRoomIdeas } = loadSuggestRoomIdeas(JSON.stringify({ seen: [], summary: 'Fotoğraf çok karanlık.', ideas: [] }));
   const result = await suggestRoomIdeas(IMAGE, 'Salon');
   assert.equal(result.ideas.length, 0);
 });
 
 test('suggestRoomIdeas: malformed or truncated answers are rejected, never half-saved', async () => {
   const bad = [
-    JSON.stringify({ summary: 'x', ideas: [{ area: 'sat', title: 'a', detail: 'b' }] }), // decluttering verdict, not an area
-    JSON.stringify({ summary: '', ideas: [] }),
-    JSON.stringify({ summary: 'x', ideas: Array.from({ length: 6 }, () => ({ area: 'renk', title: 'a', detail: 'b' })) }),
-    JSON.stringify({ summary: 'x', ideas: [{ area: 'renk', title: 'a' }] }),
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'sat', title: 'a', detail: 'b' }] }), // per-item verdict, not an area
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'diy', title: 'a', detail: 'b' }] }), // DIY is a separate feature now
+    JSON.stringify({ seen: [], summary: '', ideas: [] }),
+    JSON.stringify({ summary: 'x', ideas: [] }), // what it saw is required
+    JSON.stringify({ seen: [''], summary: 'x', ideas: [] }),
+    JSON.stringify({ seen: [], summary: 'x', ideas: Array.from({ length: 6 }, () => ({ area: 'renk', title: 'a', detail: 'b' })) }),
+    JSON.stringify({ seen: [], summary: 'x', ideas: [{ area: 'renk', title: 'a' }] }),
     'not json',
   ];
   for (const reply of bad) {
     const { suggestRoomIdeas } = loadSuggestRoomIdeas(reply);
     await assert.rejects(suggestRoomIdeas(IMAGE, 'Salon'), /invalid_room_ideas/, reply);
   }
-  const { suggestRoomIdeas } = loadSuggestRoomIdeas(JSON.stringify({ summary: 'x', ideas: [] }), 'max_tokens');
+  const { suggestRoomIdeas } = loadSuggestRoomIdeas(JSON.stringify({ seen: [], summary: 'x', ideas: [] }), 'max_tokens');
   await assert.rejects(suggestRoomIdeas(IMAGE, 'Salon'), /invalid_room_ideas/);
+});
+
+
+test('suggestRoomIdeas: requests carry an explicit effort, room for thinking, and the refusal fallback opt-in', async () => {
+  const { suggestRoomIdeas, sent } = loadSuggestRoomIdeas(JSON.stringify({ seen: ['x'], summary: 'y', ideas: [] }));
+  await suggestRoomIdeas(IMAGE, 'Salon');
+  assert.equal(sent[0].output_config.effort, 'medium');
+  assert.ok(sent[0].max_tokens >= 16000, 'thinking counts toward max_tokens on Claude Opus 5.5');
+  assert.equal(sent[0].fallbacks, 'default');
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0].betas)), ['server-side-fallback-2026-07-01']);
+  assert.equal(sent[0].thinking, undefined, 'thinking cannot be disabled on Claude Opus 5.5, so it is never sent');
+});
+
+test('suggestRoomIdeas: a refusal that survives the fallback is an error, not an empty answer', async () => {
+  const { suggestRoomIdeas } = loadSuggestRoomIdeas('', 'refusal');
+  await assert.rejects(suggestRoomIdeas(IMAGE, 'Salon'), /model_refused/);
+});
+
+test('store: a table created before "seen" existed gets the column, and old rows read as an empty list', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sestia-suggestions-'));
+  const db = new Database(path.join(directory, 'legacy.db'));
+  t.after(() => { db.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+  db.exec(`CREATE TABLE room_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, device_id TEXT NOT NULL,
+    source_photo_id INTEGER NOT NULL, summary TEXT NOT NULL, ideas_json TEXT NOT NULL,
+    messages_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+  db.prepare("INSERT INTO room_suggestions (room_id, device_id, source_photo_id, summary, ideas_json) VALUES (1, 'owner', 1, 'eski', '[]')").run();
+  const store = require('../lib/roomSuggestionStore.cjs').createRoomSuggestionStore(db);
+  assert.deepEqual(store.get(1, 'owner').seen, []);
+  assert.ok(db.prepare('PRAGMA table_info(room_suggestions)').all().some((c) => c.name === 'seen_json'));
 });

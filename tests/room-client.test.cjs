@@ -22,7 +22,7 @@ function client(fetch) {
     roomRequestRef: { current: null }, roomLeaseRef: { current: null }, roomSessionRef: { current: 0 }, roomFilesRef: { current: [] },
     roomPhotoVersionRef: { current: 0 }, roomCoverageRequestRef: { current: null }, roomUploadsRef: { current: new Map() },
     roomAnalysisPhotosRef: { current: [] }, roomSaveFlowRef: { current: null }, roomExistingLoadRef: { current: null }, roomCreateOperationRef: { current: null }, roomDetailRequestRef: { current: null }, createRoomOperationRef: { current: null }, galleryUploadRef: { current: null },
-    toparlaRequestRef: { current: null }, toparlaOperationRef: { current: null }, suggestionRequestRef: { current: null },
+    toparlaRequestRef: { current: null }, toparlaOperationRef: { current: null }, suggestionRequestRef: { current: null }, ideaRequestRef: { current: null },
     rooms: [], roomChatDraft: '', roomChatBusy: false, view: 'room-review', loadRooms() {}, refreshHomeState() {}, loadInspiration() {}, resetSingleScan() {}, compressImage: async f => f,
     roomItems: [{ id: 'item-1', recommendation: 'sat', excluded: false }], roomMessages: [], roomPhotos: [],
     roomDraftDirty: false, roomLegacyApprovalUnknown: false, roomConfirming: false, roomScanSaved: false,

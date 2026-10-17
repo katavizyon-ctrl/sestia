@@ -32,7 +32,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'invalid_messages' }, { status: 400 });
     }
 
-    const resolution = chatContext.resolveContext(body?.context ?? null, identity.id, { ownsRoom, getRoomName, getToparlaResult: toparla.getResult, getRoomSuggestion: roomSuggestions.get });
+    const resolution = chatContext.resolveContext(body?.context ?? null, identity.id, { ownsRoom, getRoomName, getToparlaResult: toparla.getResult, getRoomSuggestion: roomSuggestions.get, getRoomSuggestionIdea: roomSuggestions.getIdea });
     if (!resolution.ok) {
       return NextResponse.json({ error: resolution.error }, { status: resolution.error === 'invalid_context' ? 400 : 404 });
     }
@@ -109,7 +109,10 @@ export async function POST(req) {
     // room's history can reopen them. A failed save never costs the user the
     // reply they already got.
     if (resolvedContext.kind === 'room_suggestion') {
-      try { roomSuggestions.saveMessages(resolvedContext.roomSuggestionId, identity.id, nextMessages); }
+      try {
+        if (resolvedContext.idea) roomSuggestions.saveIdeaMessages(resolvedContext.roomSuggestionId, resolvedContext.ideaIndex, identity.id, nextMessages);
+        else roomSuggestions.saveMessages(resolvedContext.roomSuggestionId, identity.id, nextMessages);
+      }
       catch (error) { console.error('room_suggestion_chat_save_failed', { message: error?.message }); }
     }
 
