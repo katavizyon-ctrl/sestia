@@ -21,6 +21,7 @@ function loadApi(db) {
     roomDecisionStore: require('../lib/roomDecisionStore.cjs'),
     creationStore: require('../lib/creationStore.cjs'),
     toparlaStore: require('../lib/toparlaStore.cjs'),
+    roomSuggestionStore: require('../lib/roomSuggestionStore.cjs'),
     chatAttachmentStore: require('../lib/chatAttachmentStore.cjs'),
     sessionStoreModule: require('../lib/sessionStore.cjs'),
     visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),

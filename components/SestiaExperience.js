@@ -64,6 +64,7 @@ export function ChooseView({ onBack, onSingle, onRoom }) {
 
 function defaultEmptyStateCopy(productContext, entryLabel) {
   if (productContext?.kind === 'toparla_result') return 'Ne düşünüyorsun?';
+  if (productContext?.kind === 'room_suggestion') return 'Bu önerilerden hangisini konuşalım?';
   if (productContext?.kind === 'room') return 'Bu oda hakkında ne konuşmak istersin?';
   if (entryLabel === 'kose') return 'Bir köşeyi farklı kullanmak mı istiyorsun?';
   if (entryLabel === 'oda') return 'Yaşam alanında neleri değiştirmek istersin?';
@@ -108,8 +109,10 @@ export function BeforeAfterSlider({ beforeSrc, afterSrc, width, height }) {
 // view_tidied_room flow — an account can confirm and generate inline; a
 // guest is shown the same account gate as Room Detail's Toparla, via the
 // SAME onRequireAccount callback wired at Page level (no second login UI).
-export function ConversationPanel({ productContext, entryLabel, active = true, emptyStateHeading = 'Aklında ne var?', emptyStateCopy, className = '', identityType, onRequireAccount }) {
-  const [messages, setMessages] = useState([]);
+// initialMessages: a previously saved conversation to continue (read once on
+// mount — callers pass a key so a different conversation remounts the panel).
+export function ConversationPanel({ productContext, entryLabel, active = true, emptyStateHeading = 'Aklında ne var?', emptyStateCopy, className = '', identityType, onRequireAccount, initialMessages }) {
+  const [messages, setMessages] = useState(() => (Array.isArray(initialMessages) ? initialMessages : []));
   const [draft, setDraft] = useState('');
   const [attachedFile, setAttachedFile] = useState(null);
   const [attachedPreviewUrl, setAttachedPreviewUrl] = useState(null);

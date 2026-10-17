@@ -19,12 +19,13 @@ function loadApi(db) {
     roomDecisionStore: require('../lib/roomDecisionStore.cjs'),
     creationStore: require('../lib/creationStore.cjs'),
     toparlaStore: require('../lib/toparlaStore.cjs'),
+    roomSuggestionStore: require('../lib/roomSuggestionStore.cjs'),
     chatAttachmentStore: require('../lib/chatAttachmentStore.cjs'),
     sessionStoreModule: require('../lib/sessionStore.cjs'),
     visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),
   };
   vm.createContext(ctx);
-  vm.runInContext(code + ';globalThis.api={createRoom,creations,toparla,ownsRoom,getRoomName,chatAttachments,logEvent};', ctx);
+  vm.runInContext(code + ';globalThis.api={createRoom,creations,toparla,ownsRoom,getRoomName,getRoomPhotoFile,chatAttachments,roomSuggestions,logEvent};', ctx);
   return ctx.api;
 }
 
@@ -83,8 +84,9 @@ function postChatRoute(f, { owner = 'owner', chatFreelyImpl, completeResultFile 
     fs: require('fs/promises'), path,
     process: { cwd: () => f.directory },
     getIdentity: async () => (owner ? { id: owner } : null),
-    logEvent: f.api.logEvent, ownsRoom: f.api.ownsRoom, getRoomName: f.api.getRoomName,
-    toparla: f.api.toparla, chatAttachments: f.api.chatAttachments,
+    logEvent: f.api.logEvent, ownsRoom: f.api.ownsRoom, getRoomName: f.api.getRoomName, getRoomPhotoFile: f.api.getRoomPhotoFile,
+    toparla: f.api.toparla, chatAttachments: f.api.chatAttachments, roomSuggestions: f.api.roomSuggestions,
+    MAX_SUGGESTION_IMAGE_BYTES: 5 * 1024 * 1024,
     chatContext: require('../lib/chatContext.cjs'),
     chatCapabilities: require('../lib/chatCapabilities.cjs'),
     chatFreely, validChatMessages: realValidChatMessages(),
@@ -282,4 +284,30 @@ test('no chat text is ever written to the database', async t => {
   // Confirm no table anywhere in this schema stores message text.
   const tableNames = f.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name);
   assert.ok(!tableNames.includes('conversation_messages') && !tableNames.includes('conversations'), 'no transcript table exists in V1');
+});
+
+test('room_suggestion context: the room photo is the context image and the conversation is saved with the suggestion', async t => {
+  const f = fixture(t);
+  const suggestion = f.api.roomSuggestions.create('owner', f.roomId, f.photoId, {
+    summary: 'Aydınlık.', ideas: [{ area: 'isik', title: 'Lamba', detail: 'Köşeye.' }],
+  });
+  const { post, calls } = postChatRoute(f, { chatFreelyImpl: async () => ({ reply: 'Sıcak beyaz seç.', suggestedAction: null }) });
+  const res = await post({ messages: [{ role: 'user', content: 'Lamba fikrini aç' }], context: { kind: 'room_suggestion', roomSuggestionId: suggestion.id } });
+  assert.equal(res.status, 200);
+  const context = calls.lastArgs[1];
+  assert.equal(Buffer.from(context.contextImage.base64, 'base64').toString(), 'fake-jpeg-bytes', 'the owned room photo, read server-side');
+  assert.equal(context.ideas[0].title, 'Lamba');
+  // JSON copies: the route runs in its own vm realm, so its arrays have a different prototype.
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(f.api.roomSuggestions.get(suggestion.id, 'owner').messages), plain(res.body.messages), 'saved exactly as returned');
+});
+
+test('room_suggestion context: another identity can neither chat about nor write into the suggestion', async t => {
+  const f = fixture(t);
+  const suggestion = f.api.roomSuggestions.create('owner', f.roomId, f.photoId, { summary: 'Aydınlık.', ideas: [] });
+  const { post, calls } = postChatRoute(f, { owner: 'stranger' });
+  const res = await post({ messages: [{ role: 'user', content: 'Merhaba' }], context: { kind: 'room_suggestion', roomSuggestionId: suggestion.id } });
+  assert.equal(res.status, 404);
+  assert.equal(calls.chatFreely, 0);
+  assert.deepEqual(f.api.roomSuggestions.get(suggestion.id, 'owner').messages, []);
 });

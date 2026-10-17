@@ -574,6 +574,7 @@ function loadApi(db) {
   const ctx = { __testDb: db, roomDecisionStore, path, process: { cwd: () => path.dirname(db.name) },
     creationStore: require(path.join(__dirname, '../lib/creationStore.cjs')),
     toparlaStore: require(path.join(__dirname, '../lib/toparlaStore.cjs')),
+    roomSuggestionStore: require(path.join(__dirname, '../lib/roomSuggestionStore.cjs')),
     chatAttachmentStore: require(path.join(__dirname, '../lib/chatAttachmentStore.cjs')),
     sessionStoreModule: require(path.join(__dirname, '../lib/sessionStore.cjs')),
     visitMetadataStoreModule: require(path.join(__dirname, '../lib/visitMetadataStore.cjs')) };

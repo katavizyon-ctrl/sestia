@@ -22,11 +22,13 @@ import {
   ChevronRightIcon,
   BoxIcon,
   LayersIcon,
+  LightbulbIcon,
   REC_META,
   TIP_META,
 } from '@/components/icons';
 
 const ACTION_ORDER = ['tut', 'sat', 'bagisla', 'geri_donustur', 'at'];
+const SUGGESTION_AREA_LABELS = { yerlesim: 'Yerleşim', renk: 'Renk', isik: 'Işık', dekor: 'Dekor', depolama: 'Depolama', diy: 'Kendin yap' };
 const SCAN_PERSIST_ERROR = 'Analiz odaya kaydedilemedi — bu oturumda görebilirsin ama sayfa yenilenirse kaybolabilir.';
 
 // SQLite datetime('now') UTC dondurur (Z eki olmadan) — JS Date'in bunu
@@ -214,6 +216,20 @@ function PageInner() {
   // istek) ayni anahtari kullanir — yeni bir ucretli cagri asla acmaz.
   const toparlaOperationRef = useRef(null);
 
+  // ---- bana öneri ver ----
+  // Fotoğraf yoksa Toparla ile aynı not (toparlaNotice) gösterilir.
+  const [suggestionStatus, setSuggestionStatus] = useState('select'); // select | generating | loading | done | error
+  const [suggestionPhotoId, setSuggestionPhotoId] = useState(null);
+  const [suggestion, setSuggestion] = useState(null);
+  const [suggestionError, setSuggestionError] = useState(null);
+  // goTo bunu temizler: akıştan çıkıldıktan sonra gelen geç bir yanıt
+  // artık gösterilmeyen bir ekranı güncellemez. pending, çift dokunmada
+  // ikinci bir AI çağrısının başlamasını engeller.
+  const suggestionRequestRef = useRef(null);
+  // Hata ekranındaki "Tekrar dene" son denenen işlemi (yeni öneri ya da
+  // kayıtlı öneriyi açma) tekrarlar.
+  const suggestionRetryRef = useRef(null);
+
   useEffect(() => {
     logEvent('session_start');
     refreshHomeState(true);
@@ -321,6 +337,7 @@ function PageInner() {
         !window.confirm('Kaydedilmemiş taslak seçimlerin var. Kaydetmeden çıkılsın mı?')) return;
     roomDetailRequestRef.current = null;
     toparlaRequestRef.current = null;
+    suggestionRequestRef.current = null;
     setRoomCreating(false);
     if ((view === 'scan' || view === 'decision') && name !== view) resetSingleScan();
     // Also cancel a begin request started from room-detail before navigation.
@@ -346,6 +363,7 @@ function PageInner() {
     if (view === 'decision') return goTo('scan');
     if (view === 'room-detail') return goTo('rooms');
     if (view === 'toparla') return goTo('room-detail');
+    if (view === 'room-suggestions') return goTo('room-detail');
     if (view === 'room-analysis') { setHistoryAnalysis(null); setView('room-detail'); return; }
     if (view === 'celebration') return finishCelebration();
     goTo('home');
@@ -951,6 +969,89 @@ function PageInner() {
     setToparlaStatus('confirm');
   }
 
+  // "Bana öneri ver": tek fotoğrafta doğrudan başlar; birden fazlaysa kullanıcı
+  // birini açıkça seçer (sessiz/otomatik seçim yok). Fotoğraf yoksa
+  // Toparla'daki aynı not gösterilir.
+  function startSuggestionsInRoom() {
+    if (!roomDetail) return;
+    if (!roomDetail.photos.length) { setToparlaNotice(true); return; }
+    setToparlaNotice(false);
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    setSuggestion(null);
+    setSuggestionError(null);
+    // setView, goTo değil: goTo suggestionRequestRef'i temizler.
+    setView('room-suggestions');
+    if (roomDetail.photos.length === 1) { submitSuggestion(roomDetail.photos[0].id); return; }
+    suggestionRequestRef.current = null;
+    setSuggestionPhotoId(null);
+    setSuggestionStatus('select');
+  }
+
+  // Tek AI çağrısı, yalnızca açık bir dokunuştan. Başarılı sonuç odanın
+  // "Geçmiş Öneriler" listesine de eklenir (oda yeniden yüklenmeden).
+  async function submitSuggestion(photoId) {
+    if (!roomDetail || suggestionRequestRef.current?.pending) return;
+    const request = { pending: true };
+    suggestionRequestRef.current = request;
+    suggestionRetryRef.current = () => submitSuggestion(photoId);
+    const roomId = roomDetail.id;
+    setSuggestionPhotoId(photoId);
+    setSuggestion(null);
+    setSuggestionError(null);
+    setSuggestionStatus('generating');
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/suggestions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (suggestionRequestRef.current !== request) return; // bu akıştan ayrılındı
+      if (!res.ok) throw new Error(body.error || 'suggestion_failed');
+      setSuggestion(body);
+      setSuggestionStatus('done');
+      const { messages: _messages, ...saved } = body;
+      setRoomDetail((prev) => (prev && prev.id === roomId ? { ...prev, suggestions: [saved, ...(prev.suggestions || [])] } : prev));
+    } catch (err) {
+      if (suggestionRequestRef.current === request) {
+        setSuggestionError(err.message === 'photo_too_large'
+          ? 'Bu fotoğraf çok büyük. Daha küçük bir fotoğraf ekleyip tekrar dener misin?'
+          : 'Öneriler hazırlanamadı. Tekrar dener misin?');
+        setSuggestionStatus('error');
+      }
+    } finally {
+      request.pending = false;
+    }
+  }
+
+  // Kayıtlı bir öneriyi, sohbetiyle birlikte yeniden açar — yeni AI çağrısı yok.
+  async function openSavedSuggestion(saved) {
+    if (!roomDetail) return;
+    const request = {};
+    suggestionRequestRef.current = request;
+    suggestionRetryRef.current = () => openSavedSuggestion(saved);
+    const roomId = roomDetail.id;
+    activeRoomRef.current = { id: roomDetail.id, name: roomDetail.name };
+    setSuggestion(null);
+    setSuggestionError(null);
+    setSuggestionPhotoId(saved.sourcePhotoId);
+    setSuggestionStatus('loading');
+    setView('room-suggestions');
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/suggestions/${saved.id}`);
+      if (!res.ok) throw new Error('suggestion_load_failed');
+      const body = await res.json();
+      if (suggestionRequestRef.current !== request) return;
+      setSuggestion(body);
+      setSuggestionStatus('done');
+    } catch {
+      if (suggestionRequestRef.current === request) {
+        setSuggestionError('Öneri açılamadı. Tekrar dener misin?');
+        setSuggestionStatus('error');
+      }
+    }
+  }
+
   // Odanin daha once tamamlanmis (kalici) bir analizini salt-okunur
   // goruntuler — yeni karar olusturmaz, eski analizi guncellemez.
   function viewRoomAnalysis(analysis) {
@@ -1521,6 +1622,8 @@ function PageInner() {
           onScanHere={startScanInRoom}
           onRoomScanHere={startRoomScanInRoom}
           onToparlaHere={startToparlaInRoom}
+          onSuggestHere={startSuggestionsInRoom}
+          onViewSuggestion={openSavedSuggestion}
           toparlaNotice={toparlaNotice}
           onResumeScan={resumeRoomScan}
           onViewAnalysis={viewRoomAnalysis}
@@ -1539,6 +1642,22 @@ function PageInner() {
           onChangePhoto={() => setToparlaStatus('select')}
           onConfirm={submitToparla}
           onRetry={retryToparla}
+          onRequireAccount={requireAccountFlow}
+        />
+      )}
+
+      {view === 'room-suggestions' && (
+        <SuggestionsView
+          room={roomDetail}
+          photoId={suggestionPhotoId}
+          status={suggestionStatus}
+          suggestion={suggestion}
+          error={suggestionError}
+          identityType={identityType}
+          onBack={() => goTo('room-detail')}
+          onSelectPhoto={submitSuggestion}
+          onRetry={() => suggestionRetryRef.current?.()}
+          onAgain={() => submitSuggestion(suggestionPhotoId)}
           onRequireAccount={requireAccountFlow}
         />
       )}
@@ -1984,7 +2103,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, toparlaNotice, onResumeScan, onViewAnalysis }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion }) {
   return (
     <section className="view">
       <div className="scroll sestia-room-detail">
@@ -2042,6 +2161,9 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
               <button className="btn-outline" onClick={onToparlaHere} disabled={uploading}>
                 <LayersIcon style={{ width: 18, height: 18 }} /> Toparlanmış halini gör
               </button>
+              <button className="btn-outline" onClick={onSuggestHere} disabled={uploading}>
+                <LightbulbIcon style={{ width: 18, height: 18 }} /> Bana öneri ver
+              </button>
               {toparlaNotice && (
                 <p className="muted" role="status">Önce bir fotoğraf ekle — yukarıdaki “Fotoğraf Ekle” ile başlayabilirsin.</p>
               )}
@@ -2063,6 +2185,29 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{formatAnalysisDate(a.createdAt)}</div>
                         <div className="muted">{a.items.length} eşya bulundu</div>
                         {a.closed && !a.finalItems && <div className="muted">{a.closeReason === 'legacy_unknown' ? 'Eski tarama kapatıldı — onay durumu bilinmiyor' : 'Onaylanmadan kapatıldı.'}</div>}
+                      </div>
+                      <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)' }} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {room.suggestions && room.suggestions.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 10 }}>Geçmiş Öneriler</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {room.suggestions.map((s) => (
+                    <button
+                      key={s.id}
+                      className="card"
+                      style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                      onClick={() => onViewSuggestion(s)}
+                    >
+                      <div className="flamewrap-compact"><LightbulbIcon style={{ width: 16, height: 16 }} /></div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{formatAnalysisDate(s.createdAt)}</div>
+                        <div className="muted">{s.ideas.length ? s.ideas.map((idea) => idea.title).slice(0, 2).join(' · ') : 'Öneri çıkmadı'}</div>
                       </div>
                       <ChevronRightIcon style={{ width: 16, height: 16, color: 'var(--text-muted)' }} />
                     </button>
@@ -2186,6 +2331,86 @@ function ToparlaView({ room, photoId, status, result, error, onBack, onSelectPho
               emptyStateCopy="Masadaki kutular, köşedeki sandalye, ışık — aklına ne geliyorsa yazabilirsin."
               className="sestia-embedded-chat"
               identityType="account"
+              onRequireAccount={onRequireAccount}
+            />
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// "Bana öneri ver" — odayı iyileştirmeye dönük fikirler (yerleşim, renk, ışık,
+// dekor, depolama, kendin yap) ve onlar hakkında kaydedilen bir sohbet.
+// Ayıklama kararı yok; o "Odaya birlikte bakalım"ın işi.
+function SuggestionsView({ room, photoId, status, suggestion, error, identityType, onBack, onSelectPhoto, onRetry, onAgain, onRequireAccount }) {
+  if (!room) return <section className="view"><div className="scroll"><Header onBack={onBack} /><div className="thinking"><div className="spinner" /></div></div></section>;
+
+  const photoUrl = (id) => `/api/rooms/${room.id}/photos/${id}`;
+
+  return (
+    <section className="view">
+      <div className="scroll sestia-room-detail">
+        <div className="topbar">
+          <button className="iconbtn" onClick={onBack} aria-label="Geri"><BackIcon /></button>
+          <h2 style={{ fontSize: 19, fontWeight: 600 }}>Bana öneri ver</h2>
+        </div>
+
+        {status === 'select' && (
+          <>
+            <PageHeading title="Hangi fotoğrafa bakalım?" center>Fikir vermemi istediğin açıyı seç.</PageHeading>
+            <div className="photogrid">
+              {room.photos.map((photo) => (
+                <button key={photo.id} type="button" className="photothumb sestia-photo-pick" onClick={() => onSelectPhoto(photo.id)}>
+                  <img src={photoUrl(photo.id)} alt="" />
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {(status === 'generating' || status === 'loading') && (
+          <div className="thinking">
+            <div className="spinner" />
+            <p className="muted">{status === 'generating' ? 'Odana bakıyorum, fikirler hazırlanıyor…' : 'Öneri açılıyor…'}</p>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <>
+            <div className="errbox">{error || 'Öneriler hazırlanamadı. Tekrar dener misin?'}</div>
+            <button className="btn-primary" onClick={onRetry}>Tekrar dene</button>
+          </>
+        )}
+
+        {status === 'done' && suggestion && (
+          <>
+            <img className="sestia-room-hero" src={photoUrl(suggestion.sourcePhotoId)} alt={room.name} />
+            <PageHeading title={suggestion.ideas.length ? 'Bu oda için fikirlerim' : 'Bu fotoğrafla fikir veremedim'}>{suggestion.summary}</PageHeading>
+            {suggestion.ideas.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {suggestion.ideas.map((idea, i) => (
+                  <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="label">{SUGGESTION_AREA_LABELS[idea.area] || idea.area}</div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{idea.title}</div>
+                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.45 }}>{idea.detail}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button className="btn-outline" onClick={onAgain} disabled={!photoId}>
+              <LightbulbIcon style={{ width: 18, height: 18 }} /> Başka fikirler iste
+            </button>
+            {/* key: farklı bir öneriye geçilince o önerinin kendi kayıtlı
+                sohbeti açılır, öncekinin mesajları taşınmaz. */}
+            <ConversationPanel
+              key={suggestion.id}
+              productContext={{ kind: 'room_suggestion', roomSuggestionId: suggestion.id }}
+              initialMessages={suggestion.messages}
+              emptyStateHeading="Hangisini konuşalım?"
+              emptyStateCopy="Bir fikri biraz daha açmamı ya da başka bir yönde düşünmemi isteyebilirsin."
+              className="sestia-embedded-chat"
+              identityType={identityType}
               onRequireAccount={onRequireAccount}
             />
           </>

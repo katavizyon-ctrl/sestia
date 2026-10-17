@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { chatFreely, validChatMessages } from '@/lib/anthropic';
+import { chatFreely, validChatMessages, MAX_SUGGESTION_IMAGE_BYTES } from '@/lib/anthropic';
 import { getIdentity } from '@/lib/identity';
-import { logEvent, ownsRoom, getRoomName, toparla, chatAttachments } from '@/lib/db';
+import { logEvent, ownsRoom, getRoomName, getRoomPhotoFile, toparla, chatAttachments, roomSuggestions } from '@/lib/db';
 import chatContext from '@/lib/chatContext.cjs';
 import chatCapabilities from '@/lib/chatCapabilities.cjs';
 
@@ -11,6 +11,7 @@ export const runtime = 'nodejs';
 
 const RESULTS_DIR = path.join(process.cwd(), 'data', 'toparla-results');
 const ATTACHMENTS_DIR = path.join(process.cwd(), 'data', 'chat-attachments');
+const PHOTOS_DIR = path.join(process.cwd(), 'data', 'room-photos');
 
 // Kesif ekranindaki (ve artik Toparla sonucu altindaki) serbest sohbet icin
 // — /api/analyze'in aksine fotograf SART DEGIL. Ayni kimlik dogrulama deseni
@@ -31,7 +32,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'invalid_messages' }, { status: 400 });
     }
 
-    const resolution = chatContext.resolveContext(body?.context ?? null, identity.id, { ownsRoom, getRoomName, getToparlaResult: toparla.getResult });
+    const resolution = chatContext.resolveContext(body?.context ?? null, identity.id, { ownsRoom, getRoomName, getToparlaResult: toparla.getResult, getRoomSuggestion: roomSuggestions.get });
     if (!resolution.ok) {
       return NextResponse.json({ error: resolution.error }, { status: resolution.error === 'invalid_context' ? 400 : 404 });
     }
@@ -46,6 +47,18 @@ export async function POST(req) {
       const bytes = await fs.readFile(path.join(RESULTS_DIR, file.filename)).catch(() => null);
       if (!bytes) return NextResponse.json({ error: 'result_not_found' }, { status: 404 });
       resolvedContext.contextImage = { base64: bytes.toString('base64'), mediaType: file.mimeType };
+    }
+
+    // room_suggestion: the room photo the ideas were made from is the visual
+    // subject — re-read from the owned room photo every turn. An oversized
+    // legacy photo is simply left out; the ideas themselves still reach the
+    // model through the context text.
+    if (resolvedContext.kind === 'room_suggestion') {
+      const file = getRoomPhotoFile(resolvedContext.sourcePhotoId, identity.id);
+      const bytes = file ? await fs.readFile(path.join(PHOTOS_DIR, file.filename)).catch(() => null) : null;
+      if (bytes && bytes.length <= MAX_SUGGESTION_IMAGE_BYTES) {
+        resolvedContext.contextImage = { base64: bytes.toString('base64'), mediaType: file.mimeType };
+      }
     }
 
     // Resolve every user-attached image reference to bytes, ownership-checked
@@ -91,6 +104,14 @@ export async function POST(req) {
     // the new plain-text assistant reply — the JSON envelope never leaves
     // this function, and no image bytes are ever echoed back to the browser.
     const nextMessages = [...messages, { role: 'assistant', content: result.reply }];
+
+    // "Bana öneri ver" conversations are kept with their suggestion so the
+    // room's history can reopen them. A failed save never costs the user the
+    // reply they already got.
+    if (resolvedContext.kind === 'room_suggestion') {
+      try { roomSuggestions.saveMessages(resolvedContext.roomSuggestionId, identity.id, nextMessages); }
+      catch (error) { console.error('room_suggestion_chat_save_failed', { message: error?.message }); }
+    }
 
     // Sahibi panelinde test kullanıcısının sohbeti ne kadar kullandığını göstermek için; mesaj içeriği yazılmaz.
     try { logEvent(identity.id, 'chat_message', { turn: messages.length }); } catch {}

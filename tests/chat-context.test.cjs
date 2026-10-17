@@ -116,3 +116,27 @@ test('buildContextSystemText: a room-less toparla_result still carries the visua
   assert.doesNotMatch(text, /"null"|undefined/);
   assert.match(text, /görselleştirme/);
 });
+
+test('room_suggestion: only the suggestion id is accepted; room, photo and ideas come from the owned row', () => {
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4 }), true);
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion' }), false);
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, roomId: 7 }), false, 'roomId is derived, never sent');
+  assert.equal(chatContext.validContextShape({ kind: 'room_suggestion', roomSuggestionId: 4, ideas: [] }), false, 'ideas are derived, never sent');
+
+  const suggestion = { id: 4, roomId: 7, sourcePhotoId: 22, summary: 'Aydınlık.', ideas: [{ area: 'isik', title: 'Lamba', detail: 'Köşeye.' }] };
+  const deps = {
+    ...fakeDeps({ rooms: { owner: [7] } }),
+    getRoomSuggestion: (id, deviceId) => (id === 4 && deviceId === 'owner' ? suggestion : null),
+  };
+  const ok = chatContext.resolveContext({ kind: 'room_suggestion', roomSuggestionId: 4 }, 'owner', deps);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.resolved.roomId, 7);
+  assert.equal(ok.resolved.sourcePhotoId, 22);
+  assert.equal(ok.resolved.roomName, 'Room 7');
+
+  assert.deepEqual(chatContext.resolveContext({ kind: 'room_suggestion', roomSuggestionId: 4 }, 'stranger', deps), { ok: false, error: 'suggestion_not_found' });
+
+  const text = chatContext.buildContextSystemText(ok.resolved);
+  assert.match(text, /Room 7/);
+  assert.match(text, /1\) \[Işık\] Lamba — Köşeye\./);
+});
