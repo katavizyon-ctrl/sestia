@@ -443,3 +443,45 @@ test('suggestRoomIdeas and suggestIdeaPlan: corrections go in the user turn, nev
   await ctx.__plan(IMAGE, 'Atölye', { seen: [], corrections: 'mor kutu değil, çekmeceli dolap', ideas: [{ title: 'a', detail: 'b' }] }, 0);
   assert.match(planSent[0].messages[0].content[1].text, /düzeltmeleri: mor kutu değil, çekmeceli dolap/);
 });
+
+test('store migrations survive parallel processes opening the same old database (next build workers)', async t => {
+  const { spawn } = require('node:child_process');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sestia-suggestions-race-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'race.db');
+  // An old-format table: none of the later columns exist yet.
+  const seed = new Database(file);
+  seed.exec(`CREATE TABLE room_suggestions (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, device_id TEXT NOT NULL,
+    source_photo_id INTEGER NOT NULL, summary TEXT NOT NULL, ideas_json TEXT NOT NULL, messages_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+  seed.close();
+  const script = `const Database = require(${JSON.stringify(require.resolve('better-sqlite3'))});
+    const db = new Database(${JSON.stringify(file)}, { timeout: 10000 });
+    require(${JSON.stringify(path.join(__dirname, '../lib/roomSuggestionStore.cjs'))}).createRoomSuggestionStore(db);`;
+  const runs = await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve) => {
+    const child = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolve({ code, stderr }));
+  })));
+  for (const run of runs) assert.equal(run.code, 0, run.stderr);
+  const check = new Database(file);
+  const columns = check.prepare('PRAGMA table_info(room_suggestions)').all().map((c) => c.name);
+  check.close();
+  for (const column of ['seen_json', 'missing', 'goal', 'story', 'corrections']) assert.ok(columns.includes(column), column);
+});
+
+test('ensureColumn: a column another process added first is not an error', () => {
+  const { ensureColumn } = require('../lib/roomSuggestionStore.cjs');
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE t (id INTEGER)');
+  // A stale first look (as if checked just before another process added it).
+  let stale = true;
+  const view = {
+    prepare: (sql) => (stale && sql.startsWith('PRAGMA') ? { all: () => { stale = false; db.exec('ALTER TABLE t ADD COLUMN x TEXT'); return [{ name: 'id' }]; } } : db.prepare(sql)),
+    exec: (sql) => db.exec(sql),
+    transaction: (fn) => db.transaction(fn),
+  };
+  assert.doesNotThrow(() => ensureColumn(view, 't', 'x', 'TEXT'));
+  assert.ok(db.prepare('PRAGMA table_info(t)').all().some((c) => c.name === 'x'));
+});
