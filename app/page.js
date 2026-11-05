@@ -259,6 +259,7 @@ function PageInner() {
     logEvent('screen_view', { screen: view });
   }, [view]);
 
+  const startRoomRef = useRef(undefined);
   async function refreshHomeState(isInitial) {
     try {
       // /api/state artik kimligi sunucu tarafinda (cookie/oturum) cozuyor,
@@ -332,7 +333,18 @@ function PageInner() {
         const hasName = data.identityType === 'guest' && (Boolean(getUserName(data.identityId)) || skippedName);
         const isKnownGuest = data.identityType === 'guest' && confirmedGuestId && confirmedGuestId === data.identityId && hasName;
         if (data.identityType !== 'account' && !isKnownGuest) setShowWelcome(true);
-        else { setShowWelcome(false); setView(landingView(data)); }
+        else {
+          setShowWelcome(false);
+          // "/?room=<id>" opens that room (the plan editor's "Odaya dön" link).
+          // Read once and kept: the URL is cleaned right away, and this start-up
+          // step may run again (React dev mode runs effects twice).
+          if (startRoomRef.current === undefined) startRoomRef.current = new URLSearchParams(window.location.search).get('room');
+          const roomParam = startRoomRef.current;
+          if (roomParam && /^[1-9]\d{0,15}$/.test(roomParam)) {
+            window.history.replaceState(null, '', '/');
+            openRoom(roomParam);
+          } else setView(landingView(data));
+        }
       }
     } catch {
       setHomeError('Sunucuya bağlanılamadı. İnternet bağlantını kontrol et.');
