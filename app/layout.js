@@ -1,5 +1,6 @@
 import './globals.css';
 import './sestia.css';
+import Script from 'next/script';
 import GlobalErrorReporter from '@/components/GlobalErrorReporter';
 import { ASSISTANT_NAME } from '@/lib/constants';
 
@@ -32,6 +33,12 @@ export default function RootLayout({ children }) {
         />
         <link rel="icon" href="/sestia/logo.webp" type="image/webp" />
         <link rel="apple-touch-icon" href="/sestia/logo.webp" />
+        {/* crypto.randomUUID only exists on https/localhost; opening the dev
+            server from a phone at http://192.168.x.x would otherwise break
+            room creation, uploads, etc. getRandomValues works everywhere. */}
+        <Script id="random-uuid-fallback" strategy="beforeInteractive">
+          {"if(window.crypto&&!crypto.randomUUID){crypto.randomUUID=function(){return([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,function(c){return(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16)})}}"}
+        </Script>
       </head>
       <body>
         <GlobalErrorReporter />

@@ -219,3 +219,7 @@ export const REC_META = {
   at: { title: 'Öneri: At', label: 'At', varName: 'stone', Icon: TrashIcon },
   geri_donustur: { title: 'Öneri: Geri Dönüştür', label: 'Geri Dönüştür', varName: 'recycle', Icon: RecycleIcon },
 };
+
+export function FloorPlanIcon(props) {
+  return <Svg {...props}><path d="M3 3h18v18H3z"/><path d="M3 9h11V3M14 9v12M14 15h7"/></Svg>;
+}

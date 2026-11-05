@@ -53,3 +53,8 @@ input::placeholder,textarea::placeholder{color:#81776a;opacity:1}
 @media(max-width:360px){.scroll{padding-left:20px;padding-right:20px}.sestia-heading h1,.sestia-onboarding .sestia-heading h1{font-size:31px}.sestia-room-grid{grid-template-columns:1fr}.btn-primary,.btn-outline,.btn-secondary{font-size:17px}.sestia-brand-hero{width:240px;height:240px}}
 @media(min-width:900px){.sestia-with-nav{max-width:760px}.sestia-with-nav .sestia-nav{width:760px}.sestia-with-nav .scroll{padding:36px 44px}.sestia-room-grid{gap:20px}.sestia-home .sestia-editorial-photo{max-height:260px}.sestia-possibilities{grid-template-columns:1fr 1fr}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+
+/* Five navigation destinations, including Oda Planı; avoid overflow on phones. */
+.sestia-nav{justify-content:space-between;gap:2px;padding-left:5px;padding-right:5px}
+.sestia-nav button{flex:1;min-width:0;padding:3px 1px;font-size:10px}
+@media (max-width:360px){.sestia-nav button{font-size:9px}.sestia-nav svg{width:19px;height:19px}}

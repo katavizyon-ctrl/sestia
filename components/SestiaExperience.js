@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { BackIcon, BoxIcon, CameraIcon, CloseIcon, GalleryIcon, GridIcon, SendIcon, StarIcon, ChevronRightIcon } from './icons';
+import { BackIcon, BoxIcon, CameraIcon, CloseIcon, GalleryIcon, GridIcon, SendIcon, StarIcon, FloorPlanIcon, ChevronRightIcon } from './icons';
 import { MAX_UPLOAD_BYTES } from '@/lib/constants';
 import chatComposerClient from '@/lib/chatComposerClient.cjs';
 
@@ -19,7 +19,7 @@ export function Header({ onBack, onAccount }) {
 
 export function MainNavigation({ view, onNavigate }) {
   return <nav className="sestia-nav" aria-label="Ana gezinme">{[
-    ['home', 'Ana sayfa', GridIcon], ['discover', 'Keşif', StarIcon], ['rooms', 'Odalarım', BoxIcon], ['chat', 'Sestia', SendIcon],
+    ['home', 'Ana sayfa', GridIcon], ['floor-plan', 'Oda Planı', FloorPlanIcon], ['discover', 'Keşif', StarIcon], ['rooms', 'Odalarım', BoxIcon], ['chat', 'Sestia', SendIcon],
   ].map(([id, label, Icon]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => onNavigate(id)}><Icon /><span>{label}</span></button>)}</nav>;
 }
 
@@ -79,10 +79,20 @@ function defaultEmptyStateCopy(productContext, entryLabel) {
 // kullanır — ikinci bir slider icat edilmez.
 export function BeforeAfterSlider({ beforeSrc, afterSrc, width, height }) {
   const [value, setValue] = useState(50);
+  const [beforeMissing, setBeforeMissing] = useState(false);
   const ratio = width && height ? `${width} / ${height}` : '3 / 4';
+  // The original photo was deleted from the room: show the result alone.
+  if (beforeMissing) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <img className="sestia-baf-img" src={afterSrc} alt="Sonra" style={{ position: 'static', aspectRatio: ratio, width: '100%', borderRadius: 20, objectFit: 'cover' }} />
+        <p className="muted">Önceki fotoğraf odadan silindi.</p>
+      </div>
+    );
+  }
   return (
     <div className="sestia-baf" style={{ aspectRatio: ratio }}>
-      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" />
+      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" onError={() => setBeforeMissing(true)} />
       <div className="sestia-baf-after-wrap" style={{ clipPath: `inset(0 ${100 - value}% 0 0)` }}>
         <img className="sestia-baf-img" src={afterSrc} alt="Sonra" />
       </div>

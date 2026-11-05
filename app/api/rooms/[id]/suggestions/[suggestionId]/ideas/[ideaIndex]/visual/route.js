@@ -35,6 +35,7 @@ export async function POST(req, { params }) {
     quality: openaiImage.QUALITY,
   });
   if (claim.error === 'not_found') return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (claim.error === 'photo_deleted') return NextResponse.json({ error: 'photo_deleted' }, { status: 409 });
   if (claim.error === 'operation_content_conflict') return NextResponse.json({ error: 'operation_content_conflict' }, { status: 409 });
   if (!claim.justCreated) {
     if (claim.row.status === 'pending') return NextResponse.json({ error: 'already_in_progress' }, { status: 409 });

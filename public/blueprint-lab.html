@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SESTIA · Blueprint Lab</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,Arial;background:#f3f5f3;color:#1c342b}header{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;background:#183d31;color:white;gap:12px;flex-wrap:wrap}h1{font-size:19px;margin:0}small{color:#bdd4c8}.shell{display:grid;grid-template-columns:255px minmax(0,1fr) 280px;min-height:calc(100vh - 65px)}aside{padding:17px;background:white;border-right:1px solid #dde6df;overflow:auto}aside:last-child{border-right:0;border-left:1px solid #dde6df}h3{margin:18px 0 9px;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:#557364}button{font:inherit;cursor:pointer;border:1px solid #cbd8d0;background:white;border-radius:8px;padding:9px 10px;color:#193e30}button:hover{background:#edf4ef}button.active,button.primary{background:#1d7053;color:white;border-color:#1d7053}button:disabled{opacity:.35;cursor:default}.tools{display:grid;grid-template-columns:1fr 1fr;gap:7px}.full{width:100%;margin:4px 0}.bar{display:flex;gap:7px;flex-wrap:wrap}.canvaswrap{min-width:0;position:relative;overflow:hidden;background:#e8eee9}.status{position:absolute;left:14px;bottom:14px;right:14px;background:#fffdf2e8;border:1px solid #e5e3cc;border-radius:9px;padding:10px;pointer-events:none}.canvashead{position:absolute;left:14px;top:14px;z-index:1;background:white;border-radius:8px;padding:9px 12px;box-shadow:0 2px 8px #0001}svg{width:100%;height:calc(100vh - 65px);min-height:560px;display:block;touch-action:none;cursor:crosshair}label{display:block;margin:11px 0 4px;font-size:12px;color:#496557}input[type=number],input[type=text]{width:100%;padding:9px;border:1px solid #bdcfc3;border-radius:7px;font:inherit}input[type=file]{width:100%;font-size:12px}p{line-height:1.5;color:#587164}.hint{background:#f0f5f1;padding:11px;border-radius:8px;font-size:12px}.pill{background:#e1efe6;padding:4px 8px;border-radius:20px;font-size:12px;color:#205a3e}.row{display:flex;justify-content:space-between;align-items:center;gap:8px}.muted{color:#71877a;font-size:12px}hr{border:0;border-top:1px solid #e3e9e4;margin:17px 0}.kbd{font:12px monospace;background:#e8eee9;padding:2px 4px;border-radius:3px}@media(max-width:1050px){.shell{grid-template-columns:195px minmax(0,1fr)}aside:last-child{grid-column:1/-1;border-left:0;border-top:1px solid #ddd}svg{height:70vh}}@media(max-width:640px){.shell{display:block}aside{border:0;border-bottom:1px solid #ddd}.canvaswrap svg{height:65vh;min-height:390px}.tools{grid-template-columns:repeat(3,1fr)}}
+</style></head><body>
+<header><div><h1>SESTIA <span style="font-weight:400">/ Blueprint Lab</span></h1><small>Wall-first test page · independent segments · measured geometry</small></div><span id="saveState" class="pill">Local draft</span></header>
+<div class="shell">
+<aside>
+<h3>Drawing tools</h3><div class="tools">
+<button data-tool="select" class="active">↖ Select / move</button><button data-tool="wall">╱ Draw walls</button>
+<button data-tool="split">✂ Split wall</button><button data-tool="door">🚪 Door</button>
+<button data-tool="window">▤ Window</button><button data-tool="erase">⌫ Delete</button>
+</div>
+<h3>History</h3><div class="bar"><button id="undo">↶ Undo</button><button id="redo">↷ Redo</button></div>
+<p class="hint"><b>Openings:</b> after placing a window, it is automatically selected. Drag its orange end handles to resize, or drag its center to move. <b>Draw:</b> click to start, click to place each endpoint. Press <span class="kbd">Esc</span> to stop, then click elsewhere to begin a separate wall. <b>Select:</b> drag endpoints or wall bodies. <b>Split:</b> click anywhere on a wall.</p>
+<h3>Starting points</h3><button class="full" id="example">Load L-shaped example</button><button class="full" id="clear">Empty canvas</button>
+<h3>Reference image</h3><input type="file" id="reference" accept="image/*"><button class="full" id="hideRef">Toggle reference visibility</button><p class="muted">Trace over an image. Reference scale is illustrative until calibrated.</p>
+<h3>Project</h3><button class="full" id="export">Export project JSON</button><input type="file" id="import" accept=".json,application/json"><button class="full" id="svgexport">Export SVG blueprint</button>
+</aside>
+<main class="canvaswrap">
+<div class="canvashead"><div class="row"><b id="modeLabel">SELECT</b><span id="stats" class="muted"></span></div><div class="muted">Grid 25 cm · units cm · zoom <span id="zoomLabel">100%</span></div></div>
+<svg id="stage" viewBox="0 0 900 680" xmlns="http://www.w3.org/2000/svg" aria-label="Editable room blueprint">
+<defs><pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse"><path d="M 25 0 L 0 0 0 25" fill="none" stroke="#cbdcd1" stroke-width=".8"/></pattern></defs>
+<rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#grid)" pointer-events="none"/>
+<g id="referenceLayer"></g><g id="wallsLayer"></g><g id="openingsLayer"></g><g id="handlesLayer"></g><g id="previewLayer"></g>
+</svg><div class="status" id="message">Choose <b>Draw walls</b> and click two points. You can draw independent wall segments anywhere.</div>
+</main>
+<aside>
+<h3>Selected object</h3><div id="inspector"><p>Select a wall, endpoint, door or window to edit it.</p></div>
+<hr><h3>Canvas controls</h3><div class="bar"><button id="zoomIn">Zoom +</button><button id="zoomOut">Zoom −</button><button id="fit">Reset view</button></div>
+<label><input type="checkbox" id="snap" checked> Snap to grid (25 cm)</label>
+<label><input type="checkbox" id="orthogonal" checked> Prefer 90° walls while drawing</label>
+<label><input type="checkbox" id="dims" checked> Show wall dimensions</label>
+<h3>Geometry checks</h3><div id="checks" class="hint">No walls yet.</div>
+<hr><p class="muted">Prototype scope: editable wall segments, wall splitting, endpoint dragging, openings, undo/redo, local autosave and JSON export. This is not yet a complete 3D model or architectural CAD validator.</p>
+</aside></div>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
+const svg=$('stage'),layers={walls:$('wallsLayer'),openings:$('openingsLayer'),handles:$('handlesLayer'),preview:$('previewLayer'),reference:$('referenceLayer')};
+const clone=x=>JSON.parse(JSON.stringify(x));
+const embedded=new URLSearchParams(location.search).get('embedded')==='1';
+let initialized=!embedded;
+let model={walls:[],openings:[],next:1},tool='select',selected=null,chain=null,drag=null,history=[],future=[],referenceURL=null,referenceVisible=true,view={x:0,y:0,w:900,h:680};
+const el=(tag,attrs,parent)=>{let n=document.createElementNS(NS,tag);for(let [k,v] of Object.entries(attrs||{}))n.setAttribute(k,String(v));(parent||svg).appendChild(n);return n};
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const wallLength=w=>dist(w.a,w.b);
+const maxWidth=o=>{let w=model.walls.find(x=>x.id===o.wall);return w?Math.max(20,wallLength(w)-10):20};
+const pointOn=(p,a,b)=>{let dx=b.x-a.x,dy=b.y-a.y,d=dx*dx+dy*dy,t=d?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/d)):0;return {x:a.x+t*dx,y:a.y+t*dy,t}};
+const point=e=>{let p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse())};
+const msg=s=>$('message').textContent=s;
+const save=()=>{if(embedded){if(initialized){parent.postMessage({type:'sestia:blueprint:change',model:clone(model)},location.origin);$('saveState').textContent='Saving…'}return}try{localStorage.setItem('sestia-blueprint-lab-v1',JSON.stringify(model));$('saveState').textContent='Autosaved locally'}catch(e){$('saveState').textContent='Save unavailable'}};
+const checkpoint=()=>{history.push(clone(model));if(history.length>300)history.shift();future=[];updateHistory()};
+const updateHistory=()=>{$('undo').disabled=!history.length;$('redo').disabled=!future.length};
+const changed=()=>{save();render()};
+const undo=()=>{if(!history.length)return;future.push(clone(model));model=history.pop();selected=null;chain=null;drag=null;changed();updateHistory();msg('Undone.')};
+const redo=()=>{if(!future.length)return;history.push(clone(model));model=future.pop();selected=null;chain=null;drag=null;changed();updateHistory();msg('Redone.')};
+const nearest=p=>{let best=null,d=12;for(let w of model.walls)for(let key of ['a','b']){let dd=dist(p,w[key]);if(dd<d){d=dd;best=w[key]}}return best};
+const snapPoint=(p,base=null)=>{p={x:Number(p.x),y:Number(p.y)};let q=nearest(p);if(q)return {...q};if($('orthogonal').checked&&base){if(Math.abs(p.x-base.x)<22)p.x=base.x;else if(Math.abs(p.y-base.y)<22)p.y=base.y}if($('snap').checked){p.x=Math.round(p.x/25)*25;p.y=Math.round(p.y/25)*25}return p};
+const line=(a,b,stroke,width,parent,attrs={})=>el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke,'stroke-width':width,'stroke-linecap':'round',...attrs},parent);
+function render(){
+ for(let layer of Object.values(layers))layer.replaceChildren();
+ if(referenceURL&&referenceVisible)el('image',{href:referenceURL,x:80,y:70,width:740,height:520,opacity:.38,'pointer-events':'none'},layers.reference);
+ for(let w of model.walls){
+ const active=selected?.type==='wall'&&selected.id===w.id;
+ line(w.a,w.b,active?'#db8d2d':'#224c3c',w.thickness||12,layers.walls,{'pointer-events':'none'});
+ line(w.a,w.b,'transparent',Math.max(25,w.thickness+16),layers.walls,{'data-wall':w.id});
+ if($('dims').checked){let m={x:(w.a.x+w.b.x)/2,y:(w.a.y+w.b.y)/2};el('text',{x:m.x+8,y:m.y-10,fill:'#183d31','font-size':13,'font-weight':650,'pointer-events':'none','paint-order':'stroke',stroke:'#f3f5f3','stroke-width':4},layers.handles).textContent=(wallLength(w)/100).toFixed(2)+' m'}
+ for(let key of ['a','b'])el('circle',{cx:w[key].x,cy:w[key].y,r:7,fill:active?'#ffdb9a':'#fff',stroke:'#1d7053','stroke-width':2,'data-endpoint':key,'data-wall':w.id},layers.handles)
+ }
+ for(let o of model.openings){let w=model.walls.find(w=>w.id===o.wall);if(!w)continue;let t=Math.max(0,Math.min(1,o.t)),cx=w.a.x+(w.b.x-w.a.x)*t,cy=w.a.y+(w.b.y-w.a.y)*t,ang=Math.atan2(w.b.y-w.a.y,w.b.x-w.a.x)*180/Math.PI;let g=el('g',{transform:`translate(${cx} ${cy}) rotate(${ang})`},layers.openings);el('rect',{x:-o.width/2,y:-10,width:o.width,height:20,fill:'#e8eee9',stroke:o.type==='door'?'#bc7740':'#3e90c2','stroke-width':3,'data-opening':o.id},g);
+ if(selected?.type==='opening'&&selected.id===o.id){for(let side of [-1,1])el('rect',{x:side*o.width/2-6,y:-15,width:12,height:30,rx:3,fill:'#f4a340',stroke:'#70471c','stroke-width':1.5,'data-resize':side,'data-opening':o.id,style:'cursor:ew-resize'},g)}if(o.type==='door')el('path',{d:`M ${-o.width/2} 0 L ${-o.width/2} ${-o.width} A ${o.width} ${o.width} 0 0 1 ${o.width/2} 0`,fill:'none',stroke:'#bc7740','stroke-width':1.5,'stroke-dasharray':'5 3','pointer-events':'none'},g);else line({x:-o.width/2,y:0},{x:o.width/2,y:0},'#3e90c2',2,g,{'pointer-events':'none'})}
+ if(chain){el('circle',{cx:chain.x,cy:chain.y,r:6,fill:'#d38d3b',stroke:'white','stroke-width':2},layers.preview)}
+ $('stats').textContent=`${model.walls.length} walls · ${model.openings.length} openings`;
+ inspect();check();
+}
+function inspect(){
+ const box=$('inspector');box.replaceChildren();
+ const addLabel=(s)=>{let l=document.createElement('label');l.textContent=s;box.append(l)};
+ const field=(label,val,fn,step=1)=>{addLabel(label);let i=document.createElement('input');i.type='number';i.step=step;i.value=Number(val.toFixed(2));i.addEventListener('change',()=>{let n=Number(i.value);if(!Number.isFinite(n))return;checkpoint();fn(n);changed()});box.append(i)};
+ if(!selected){let p=document.createElement('p');p.textContent='Click a wall or opening to edit its dimensions and position.';box.append(p);return}
+ if(selected.type==='wall'){let w=model.walls.find(w=>w.id===selected.id);if(!w){selected=null;return}
+ addLabel('Wall #'+w.id);field('Length (cm)',wallLength(w),n=>{if(n<1)return;let len=wallLength(w)||1;w.b.x=w.a.x+(w.b.x-w.a.x)*n/len;w.b.y=w.a.y+(w.b.y-w.a.y)*n/len});
+ field('Thickness (cm)',w.thickness,n=>w.thickness=Math.max(2,Math.min(200,n)));
+ for(let k of ['a','b'])for(let ax of ['x','y'])field(`${k.toUpperCase()} ${ax.toUpperCase()} (cm)`,w[k][ax],n=>w[k][ax]=n);
+ let b=document.createElement('button');b.className='full';b.textContent='Delete selected wall';b.onclick=()=>{checkpoint();model.walls=model.walls.filter(x=>x.id!==w.id);model.openings=model.openings.filter(x=>x.wall!==w.id);selected=null;changed()};box.append(b)
+ }else{let o=model.openings.find(x=>x.id===selected.id);if(!o){selected=null;return}
+ addLabel(o.type.toUpperCase()+' #'+o.id);field('Width (cm)',o.width,n=>o.width=Math.max(20,Math.min(maxWidth(o),n)));
+ addLabel('Drag orange handles to resize');
+ let slider=document.createElement('input');slider.type='range';slider.min=20;slider.max=Math.round(maxWidth(o));slider.step=1;slider.value=o.width;slider.style.width='100%';slider.addEventListener('change',()=>{checkpoint();o.width=Number(slider.value);changed()});box.append(slider);field('Position along wall (%)',o.t*100,n=>o.t=Math.max(0,Math.min(1,n/100)));
+ let b=document.createElement('button');b.className='full';b.textContent='Delete opening';b.onclick=()=>{checkpoint();model.openings=model.openings.filter(x=>x.id!==o.id);selected=null;changed()};box.append(b)}
+}
+function check(){
+ let issues=[];for(let w of model.walls)if(wallLength(w)<15)issues.push(`Wall #${w.id} is shorter than 15 cm`);
+ for(let i=0;i<model.walls.length;i++)for(let j=i+1;j<model.walls.length;j++){let a=model.walls[i],b=model.walls[j];let cross=(p,q,r)=>(q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x);let v1=cross(a.a,a.b,b.a),v2=cross(a.a,a.b,b.b),v3=cross(b.a,b.b,a.a),v4=cross(b.a,b.b,a.b);if(v1*v2<0&&v3*v4<0)issues.push(`Walls #${a.id} and #${b.id} intersect`)}
+ let ends=model.walls.flatMap(w=>[w.a,w.b]),open=ends.filter((p,i)=>!ends.some((q,j)=>i!==j&&dist(p,q)<.01)).length;
+ $('checks').textContent=`${model.walls.length} walls · ${open} unconnected endpoints. ${issues.length?issues.join('; '):'No short walls or crossing intersections detected.'} This is a basic check, not a full room validator.`;
+}
+function setTool(t){tool=t;chain=null;drag=null;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));$('modeLabel').textContent=t.toUpperCase();msg(({wall:'Click to start a wall. Click to finish each segment. Esc ends the chain.',select:'Drag a white endpoint to adjust a wall; drag the wall to move it.',split:'Click a wall to insert a new endpoint and split it.',door:'Click a wall to insert a door.',window:'Click a wall to insert a window.',erase:'Click a wall or opening to delete it.'})[t]);render()}
+document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+function hit(e){let target=e.target.closest('[data-opening],[data-endpoint],[data-wall]');return target?{resize:target.dataset.resize||null,wall:target.dataset.wall?Number(target.dataset.wall):null,endpoint:target.dataset.endpoint||null,opening:target.dataset.opening?Number(target.dataset.opening):null}:{}}
+svg.addEventListener('pointerdown',e=>{
+ if(e.button!==0)return;let p=point(e),h=hit(e),w=model.walls.find(x=>x.id===h.wall);
+ if(tool==='wall'){let q=snapPoint(p,chain);if(chain){if(dist(chain,q)>1){checkpoint();model.walls.push({id:model.next++,a:{...chain},b:{...q},thickness:12});chain=q;changed();msg('Segment added. Click again to continue, or press Esc to start elsewhere.')} }else{chain=q;render();msg('First point placed. Click the next endpoint.')}return}
+ if(tool==='split'&&w){let q=pointOn(p,w.a,w.b);if(q.t<.03||q.t>.97){msg('Click farther from the endpoint to split.');return}checkpoint();let originalB={...w.b};w.b={x:q.x,y:q.y};let nw={id:model.next++,a:{x:q.x,y:q.y},b:originalB,thickness:w.thickness};model.walls.push(nw);for(let o of model.openings.filter(x=>x.wall===w.id)){if(o.t>q.t){o.wall=nw.id;o.t=(o.t-q.t)/(1-q.t)}else{o.t=o.t/q.t}}selected={type:'wall',id:nw.id};changed();msg('Wall split into two independently editable segments.');return}
+ if((tool==='door'||tool==='window')&&w){checkpoint();let q=pointOn(p,w.a,w.b);let width=Math.min(wallLength(w)-10,tool==='door'?85:120);width=Math.max(20,width);model.openings.push({id:model.next++,wall:w.id,t:q.t,type:tool,width});selected={type:'opening',id:model.openings.at(-1).id};setTool('select');selected={type:'opening',id:model.openings.at(-1).id};changed();msg('Opening selected: drag its body to move it, or drag either orange end handle to resize.');return}
+ if(tool==='erase'){if(h.opening){checkpoint();model.openings=model.openings.filter(x=>x.id!==h.opening)}else if(w){checkpoint();model.walls=model.walls.filter(x=>x.id!==w.id);model.openings=model.openings.filter(x=>x.wall!==w.id)}selected=null;changed();return}
+ if(tool==='select'){
+ if(h.opening){selected={type:'opening',id:h.opening};let o=model.openings.find(x=>x.id===h.opening);checkpoint();drag={type:h.resize?'resize':'opening',id:h.opening,wall:o.wall,side:Number(h.resize)||0,initial:clone(o)};svg.setPointerCapture(e.pointerId);render();return}
+ if(w){selected={type:'wall',id:w.id};checkpoint();drag={type:h.endpoint?'endpoint':'wall',id:w.id,key:h.endpoint,origin:p,original:clone(w),attached:model.walls.filter(x=>x.id!==w.id).map(x=>({id:x.id,a:{...x.a},b:{...x.b}}))};svg.setPointerCapture(e.pointerId);render();return}
+ selected=null;render();
+ }
+});
+svg.addEventListener('pointermove',e=>{if(!drag)return;let p=point(e);if(drag.type==='resize'){let o=model.openings.find(x=>x.id===drag.id),w=model.walls.find(x=>x.id===o.wall);if(w){let proj=pointOn(p,w.a,w.b),length=wallLength(w),center=drag.initial.t*length,edge=proj.t*length;let fixed=center-drag.side*drag.initial.width/2;let desired=drag.side*(edge-fixed);let width=Math.max(20,Math.min(length-10,desired));let newCenter=fixed+drag.side*width/2;o.width=width;o.t=Math.max(width/2/length,Math.min(1-width/2/length,newCenter/length));}}else if(drag.type==='opening'){let o=model.openings.find(x=>x.id===drag.id),w=model.walls.find(x=>x.id===o.wall);if(w){let t=pointOn(p,w.a,w.b).t,margin=Math.min(.49,o.width/2/wallLength(w));o.t=Math.max(margin,Math.min(1-margin,t))}}else{let w=model.walls.find(x=>x.id===drag.id);if(!w)return;let dx=p.x-drag.origin.x,dy=p.y-drag.origin.y;if(drag.type==='endpoint'){let old=drag.original[drag.key];let np=snapPoint({x:old.x+dx,y:old.y+dy});w[drag.key]=np;for(let a of drag.attached){let other=model.walls.find(x=>x.id===a.id);if(!other)continue;for(let k of ['a','b'])if(dist(a[k],old)<.01)other[k]={...np}}}else{w.a={x:drag.original.a.x+dx,y:drag.original.a.y+dy};w.b={x:drag.original.b.x+dx,y:drag.original.b.y+dy}}}render()});
+const finishDrag=()=>{if(drag){drag=null;changed();msg('Object moved. Undo is available.')}};svg.addEventListener('pointerup',finishDrag);svg.addEventListener('pointercancel',finishDrag);
+window.addEventListener('keydown',e=>{let editing=['INPUT','TEXTAREA'].includes(document.activeElement.tagName);if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){if(editing)return;e.preventDefault();e.shiftKey?redo():undo()}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){if(editing)return;e.preventDefault();redo()}else if(e.key==='Escape'){chain=null;drag=null;render();msg('Drawing chain ended. Click anywhere to start a new independent wall.')}else if(!editing&&e.key==='Delete'&&selected){checkpoint();if(selected.type==='wall'){model.walls=model.walls.filter(w=>w.id!==selected.id);model.openings=model.openings.filter(o=>o.wall!==selected.id)}else model.openings=model.openings.filter(o=>o.id!==selected.id);selected=null;changed()}});
+$('undo').onclick=undo;$('redo').onclick=redo;
+const example=()=>{checkpoint();model={walls:[],openings:[],next:1};let pts=[[150,110],[750,110],[750,330],[450,330],[450,560],[150,560]];for(let i=0;i<pts.length;i++)model.walls.push({id:model.next++,a:{x:pts[i][0],y:pts[i][1]},b:{x:pts[(i+1)%pts.length][0],y:pts[(i+1)%pts.length][1]},thickness:12});selected=null;chain=null;setTool('select');changed();msg('L-shaped sample loaded. Dimensions are illustrative; edit them in the right panel.')};
+$('example').onclick=example;$('clear').onclick=()=>{if(!confirm('Clear the current canvas? Undo will remain available.'))return;checkpoint();model={walls:[],openings:[],next:1};selected=null;chain=null;changed();msg('Empty canvas ready.')};
+function download(name,data,type){let a=document.createElement('a'),url=URL.createObjectURL(new Blob([data],{type}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+$('export').onclick=()=>download('sestia-blueprint.json',JSON.stringify({format:'sestia-blueprint-v1',model},null,2),'application/json');
+$('svgexport').onclick=()=>{let copy=svg.cloneNode(true);copy.querySelector('#referenceLayer')?.remove();download('sestia-blueprint.svg',new XMLSerializer().serializeToString(copy),'image/svg+xml')};
+$('import').onchange=async e=>{let f=e.target.files[0];if(!f)return;try{let d=JSON.parse(await f.text()),m=d.model||d;if(!Array.isArray(m.walls)||!Array.isArray(m.openings))throw Error('Invalid project');checkpoint();model=m;model.next=Math.max(model.next||1,...model.walls.map(x=>x.id+1),...model.openings.map(x=>x.id+1));selected=null;chain=null;changed();msg('Project loaded.')}catch(err){alert('Could not load project: '+err.message)}e.target.value=''};
+$('reference').onchange=e=>{let f=e.target.files[0];if(!f)return;if(referenceURL)URL.revokeObjectURL(referenceURL);referenceURL=URL.createObjectURL(f);referenceVisible=true;render();msg('Reference image loaded for tracing (not yet scale-calibrated).')};
+$('hideRef').onclick=()=>{referenceVisible=!referenceVisible;render()};
+const setView=()=>{svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);$('zoomLabel').textContent=Math.round(900/view.w*100)+'%'};
+$('zoomIn').onclick=()=>{view.x+=view.w*.1;view.y+=view.h*.1;view.w*=.8;view.h*=.8;setView()};
+$('zoomOut').onclick=()=>{view.x-=view.w*.125;view.y-=view.h*.125;view.w*=1.25;view.h*=1.25;setView()};
+$('fit').onclick=()=>{view={x:0,y:0,w:900,h:680};setView()};
+$('dims').onchange=render;
+if(!embedded){try{let d=localStorage.getItem('sestia-blueprint-lab-v1');if(d){let m=JSON.parse(d);if(Array.isArray(m.walls)&&Array.isArray(m.openings))model=m}}catch(e){}}
+window.addEventListener('message',e=>{if(!embedded||e.origin!==location.origin||e.source!==parent)return;const data=e.data||{};if(data.type==='sestia:blueprint:load'&&!initialized){let m=data.model;if(m&&Array.isArray(m.walls)&&Array.isArray(m.openings)){model=clone(m);model.next=Math.max(1,model.next||1,...model.walls.map(x=>x.id+1),...model.openings.map(x=>x.id+1))}initialized=true;history=[];future=[];selected=null;chain=null;drag=null;render();updateHistory();$('saveState').textContent='Ready';msg('Room blueprint loaded. Changes are saved to this SESTIA room.')}if(data.type==='sestia:blueprint:saved'){$('saveState').textContent='Saved to room'}if(data.type==='sestia:blueprint:error'){$('saveState').textContent='Save failed'}});
+if(embedded){document.getElementById('saveState').textContent='Loading room…';parent.postMessage({type:'sestia:blueprint:ready'},location.origin)}
+updateHistory();render();setView();
+})();
+</script></body></html>

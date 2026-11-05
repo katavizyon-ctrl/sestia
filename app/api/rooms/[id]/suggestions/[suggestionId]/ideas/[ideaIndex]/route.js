@@ -49,8 +49,12 @@ export async function POST(req, { params }) {
   if (!found) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (found.plan) return NextResponse.json(publicIdea(found));
 
-  const photo = roomSuggestions.getOwnedPhoto(found.suggestion.sourcePhotoId, found.suggestion.roomId, identity.id);
-  const bytes = photo ? await fs.readFile(path.join(PHOTOS_DIR, photo.filename)).catch(() => null) : null;
+  // The suggestion's photo may have been deleted since; the plan can still be
+  // made from the room's remaining photos.
+  const photo = roomSuggestions.getOwnedPhoto(found.suggestion.sourcePhotoId, found.suggestion.roomId, identity.id)
+    || roomSuggestions.listRoomPhotos(found.suggestion.roomId, identity.id, 1)[0];
+  if (!photo) return NextResponse.json({ error: 'photo_deleted' }, { status: 409 });
+  const bytes = await fs.readFile(path.join(PHOTOS_DIR, photo.filename)).catch(() => null);
   if (!bytes) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (bytes.length > MAX_SUGGESTION_IMAGE_BYTES) return NextResponse.json({ error: 'photo_too_large' }, { status: 422 });
 

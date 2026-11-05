@@ -387,7 +387,7 @@ Kodda krem/kahverengi palet, Fraunces başlıkları ve Plus Jakarta Sans metinle
 
 ### Tasarım dosyaları
 
-Tek güncel set: [sestia-ui-konseptleri-v1 incelemesi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/INCELEME.md).
+Tek güncel set: [sestia-ui-konseptleri-v1 incelemesi](../design-references/sestia-ui-konseptleri-v1/INCELEME.md).
 
 18 görsel:
 
@@ -537,19 +537,19 @@ Geliştirme sıralaması önerisi: önce kayıt ve kimlik sürekliliği, ardınd
 
 ### Ana kaynaklar
 
-- [Karakter dosyası v1](C:/projects/SESTIA/docs/SESTIA_KARAKTER_DOSYASI_v1.md): Onaylı karakter temeli; deneysel ve hedef bölümleri kendi statüsüyle okunmalı.
-- [Karakter yenileme faz 1](C:/projects/SESTIA/docs/SESTIA_KARAKTER_YENILEME_FAZ1.md): Aktarım ve önceki test raporu.
-- [Karakter entegrasyonu ön denetim](C:/projects/SESTIA/docs/SESTIA_KARAKTER_ENTEGRASYONU_ON_DENETIM.md): Önceki durum değerlendirmesi.
-- [Uygulama denetimi](C:/projects/SESTIA/SESTIA_UYGULAMA_DENETIM_RAPORU.md): Önceki ürün/uygulama incelemesi.
-- [Hafıza mimarisi denetimi](C:/projects/SESTIA/docs/SESTIA_HAFIZA_MIMARISI_DENETIM.md): Ayrıntılı hafıza değerlendirmesi; eski satır numaraları güncel kodla kontrol edilmeli.
-- [Kütüphane mimarisi](C:/projects/SESTIA/SESTIA_BILGI_KUTUPHANESI/00_MIMARI_VE_PLANLAMA/SESTIA_BILGI_KUTUPHANESI_RAPOR.md): Kavramsal tasarım.
-- [Bilgi tipleri ve ilişki şeması](C:/projects/SESTIA/SESTIA_BILGI_KUTUPHANESI/91_BILGI_ILISKILERI/bilgi_tipleri_ve_iliski_semasi.md): Taslak alan ve ilişki sözlüğü.
-- [Kütüphane devir raporu](C:/projects/SESTIA/SESTIA_BILGI_KUTUPHANESI/00_MIMARI_VE_PLANLAMA/SESTIA_TAM_DEVIR_RAPORU_01.md): İlk renk içeriği ve tarihsel durum.
-- [Renk araştırması](C:/projects/SESTIA/SESTIA_BILGI_KUTUPHANESI/90_ARASTIRMA_VE_KAYNAKLAR/RENK_ARASTIRMASI_01.md): Kaynak kaydı ve bilgi boşlukları.
-- [Görsel referans organizasyonu](C:/projects/SESTIA/SESTIA_BILGI_KUTUPHANESI/00_MIMARI_VE_PLANLAMA/RENK_REFERANS_INBOX_ORGANIZASYON_RAPORU_01.md): Sonraki kartela çalışması.
-- [Renk referans envanteri](C:/projects/SESTIA/SESTIA_BILGI_KUTUPHANESI/05_RENK_VE_GORSEL_KOMPOZISYON/Kartela_Referanslari/00_ENVANTER/RENK_REFERANS_ENVANTERI_01.md): 29 referansın kaydı.
-- [UI tasarım seti](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/INCELEME.md): 18 görsel ve öneri sınırları.
-- [Ekran kodu](C:/projects/SESTIA/app/page.js), [AI çağrıları](C:/projects/SESTIA/lib/anthropic.js), [veri katmanı](C:/projects/SESTIA/lib/db.js), [kimlik](C:/projects/SESTIA/lib/identity.js), [hesap](C:/projects/SESTIA/lib/auth.js), [editoryal içerik](C:/projects/SESTIA/lib/sestiaLibrary.js).
+- [Karakter dosyası v1](SESTIA_KARAKTER_DOSYASI_v1.md): Onaylı karakter temeli; deneysel ve hedef bölümleri kendi statüsüyle okunmalı.
+- [Karakter yenileme faz 1](SESTIA_KARAKTER_YENILEME_FAZ1.md): Aktarım ve önceki test raporu.
+- [Karakter entegrasyonu ön denetim](SESTIA_KARAKTER_ENTEGRASYONU_ON_DENETIM.md): Önceki durum değerlendirmesi.
+- [Uygulama denetimi](../SESTIA_UYGULAMA_DENETIM_RAPORU.md): Önceki ürün/uygulama incelemesi.
+- [Hafıza mimarisi denetimi](SESTIA_HAFIZA_MIMARISI_DENETIM.md): Ayrıntılı hafıza değerlendirmesi; eski satır numaraları güncel kodla kontrol edilmeli.
+- [Kütüphane mimarisi](../SESTIA_BILGI_KUTUPHANESI/02_KUTUPHANE/00_MIMARI_VE_PLANLAMA/SESTIA_BILGI_KUTUPHANESI_RAPOR.md): Kavramsal tasarım.
+- [Bilgi tipleri ve ilişki şeması](../SESTIA_BILGI_KUTUPHANESI/03_ALTYAPI/03_BILGI_ILISKILERI/bilgi_tipleri_ve_iliski_semasi.md): Taslak alan ve ilişki sözlüğü.
+- [Kütüphane devir raporu](../SESTIA_BILGI_KUTUPHANESI/02_KUTUPHANE/00_MIMARI_VE_PLANLAMA/SESTIA_TAM_DEVIR_RAPORU_01.md): İlk renk içeriği ve tarihsel durum.
+- [Renk araştırması](../SESTIA_BILGI_KUTUPHANESI/01_ARASTIRMA/05_RENK_VE_GORSEL_KOMPOZISYON/RENK_ARASTIRMASI_01.md): Kaynak kaydı ve bilgi boşlukları.
+- [Görsel referans organizasyonu](../SESTIA_BILGI_KUTUPHANESI/02_KUTUPHANE/00_MIMARI_VE_PLANLAMA/RENK_REFERANS_INBOX_ORGANIZASYON_RAPORU_01.md): Sonraki kartela çalışması.
+- [Renk referans envanteri](../SESTIA_BILGI_KUTUPHANESI/02_KUTUPHANE/05_RENK_VE_GORSEL_KOMPOZISYON/Kartela_Referanslari/00_ENVANTER/RENK_REFERANS_ENVANTERI_01.md): 29 referansın kaydı.
+- [UI tasarım seti](../design-references/sestia-ui-konseptleri-v1/INCELEME.md): 18 görsel ve öneri sınırları.
+- [Ekran kodu](../app/page.js), [AI çağrıları](../lib/anthropic.js), [veri katmanı](../lib/db.js), [kimlik](../lib/identity.js), [hesap](../lib/auth.js), [editoryal içerik](../lib/sestiaLibrary.js).
 
 ### Kaynaklar arasındaki tarih farkları
 

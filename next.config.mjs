@@ -7,6 +7,8 @@ const nextConfig = {
   // unbundled require() at runtime.
   serverExternalPackages: ['better-sqlite3', 'geoip-lite'],
   devIndicators: false,
+  // Lets a phone on the home Wi-Fi open the dev server at http://192.168.1.x:3000.
+  allowedDevOrigins: ['192.168.1.*'],
 };
 
 export default nextConfig;
