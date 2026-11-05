@@ -28,7 +28,7 @@ function loadApi(db) {
     visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),
   };
   vm.createContext(ctx);
-  vm.runInContext(code + ';globalThis.api={createRoom,getRoomBlueprint,putRoomBlueprint,getRoomDetail};', ctx);
+  vm.runInContext(code + ';globalThis.api={createRoom,getRoomBlueprint,putRoomBlueprint,getRoomDetail,deleteRoomPhoto};', ctx);
   return ctx.api;
 }
 
@@ -78,6 +78,7 @@ const L_ROOM = () => ({
     { id: 3, wall: 1, t: 0.5, type: 'window', width: 120 },
     { id: 4, wall: 2, t: 0.4, type: 'door', width: 85 },
   ],
+  photos: [],
   next: 5,
 });
 
@@ -101,7 +102,7 @@ test('blueprint validation: only the fields the editor knows are kept', () => {
   m.walls[0].note = 'x'.repeat(50);
   m.extra = { anything: true };
   const kept = validation.normalizeBlueprint(m);
-  assert.deepEqual(Object.keys(kept), ['walls', 'openings', 'next']);
+  assert.deepEqual(Object.keys(kept), ['walls', 'openings', 'photos', 'next']);
   assert.equal(kept.walls[0].note, undefined);
   assert.deepEqual(kept.walls[1], L_ROOM().walls[1]);
 });
@@ -110,7 +111,7 @@ test('blueprint validation: only the fields the editor knows are kept', () => {
 
 test('blueprint store: a new room starts empty; a saved plan comes back exactly', t => {
   const f = fixture(t);
-  assert.deepEqual(plain(f.api.getRoomBlueprint(f.roomId, 'owner')), { model: { walls: [], openings: [], next: 1 }, schemaVersion: 1, updatedAt: null });
+  assert.deepEqual(plain(f.api.getRoomBlueprint(f.roomId, 'owner')), { model: { walls: [], openings: [], photos: [], next: 1 }, roomPhotos: [], schemaVersion: 1, updatedAt: null });
   const saved = f.api.putRoomBlueprint(f.roomId, 'owner', L_ROOM());
   assert.ok(saved.updatedAt);
   const back = f.api.getRoomBlueprint(f.roomId, 'owner');
@@ -188,6 +189,58 @@ test('room details carry the saved plan for the room screen preview; none, or an
   f.api.putRoomBlueprint(f.roomId, 'owner', { walls: [], openings: [], next: 1 });
   assert.equal(f.api.getRoomDetail(f.roomId, 'owner').blueprint, null, 'an emptied plan shows no preview');
   f.api.putRoomBlueprint(f.roomId, 'owner', L_ROOM());
-  assert.deepEqual(plain(f.api.getRoomDetail(f.roomId, 'owner').blueprint), { walls: L_ROOM().walls, openings: L_ROOM().openings });
+  assert.deepEqual(plain(f.api.getRoomDetail(f.roomId, 'owner').blueprint), { walls: L_ROOM().walls, openings: L_ROOM().openings, photos: [] });
   assert.equal(f.api.getRoomDetail(f.roomId, 'stranger'), null, 'still only the owner');
+});
+
+// ---------------- P2: photos placed on the plan ----------------
+const addPhoto = (f, roomId = f.roomId, owner = 'owner') =>
+  Number(f.db.prepare('INSERT INTO room_photos (room_id, device_id, filename, mime_type) VALUES (?, ?, ?, ?)').run(roomId, owner, `p-${Math.random()}.jpg`, 'image/jpeg').lastInsertRowid);
+const withPhotos = (...markers) => ({ ...L_ROOM(), photos: markers, next: 5 + markers.length });
+const marker = (id, photoId, extra = {}) => ({ id, photoId, x: 300, y: 200, angle: 45, ...extra });
+
+test('photo markers: validation (one per photo, own ids, finite numbers); angle kept within 0-359', () => {
+  assert.equal(validation.validBlueprint(withPhotos(marker(5, 11))), true);
+  assert.equal(validation.validBlueprint(L_ROOM()), true, 'older plans without photos stay valid');
+  const noPhotosKey = L_ROOM(); delete noPhotosKey.photos;
+  assert.equal(validation.validBlueprint(noPhotosKey), true);
+  assert.equal(validation.validBlueprint(withPhotos(marker(5, 11), marker(6, 11))), false, 'the same photo twice');
+  assert.equal(validation.validBlueprint(withPhotos(marker(3, 11))), false, 'an id already used by an opening');
+  assert.equal(validation.validBlueprint(withPhotos(marker(5, 11, { angle: Infinity }))), false);
+  assert.equal(validation.validBlueprint(withPhotos(marker(5, 0))), false, 'not a photo id');
+  assert.equal(validation.validBlueprint({ ...L_ROOM(), photos: 'x' }), false);
+  assert.equal(validation.normalizeBlueprint(withPhotos(marker(5, 11, { angle: -90 }))).photos[0].angle, 270);
+});
+
+test('photo markers: saved with the plan for this room’s own photos only; foreign ones are dropped', t => {
+  const f = fixture(t);
+  const mine = addPhoto(f);
+  const kitchen = f.api.createRoom('owner', 'Mutfak');
+  const otherRoom = addPhoto(f, kitchen.id);
+  const stranger = addPhoto(f, f.api.createRoom('stranger', 'X').id, 'stranger');
+  f.api.putRoomBlueprint(f.roomId, 'owner', withPhotos(marker(5, mine), marker(6, otherRoom), marker(7, stranger), marker(8, 99999)));
+  const back = f.api.getRoomBlueprint(f.roomId, 'owner');
+  assert.deepEqual(plain(back.model.photos), [marker(5, mine)]);
+  assert.deepEqual(plain(back.roomPhotos), [mine], 'the editor gets this room’s photos to place');
+});
+
+test('photo markers: a deleted photo’s marker disappears from the editor and the room screen', t => {
+  const f = fixture(t);
+  const first = addPhoto(f), second = addPhoto(f);
+  f.api.putRoomBlueprint(f.roomId, 'owner', withPhotos(marker(5, first), marker(6, second, { angle: 180 })));
+  assert.equal(f.api.getRoomDetail(f.roomId, 'owner').blueprint.photos.length, 2);
+  f.api.deleteRoomPhoto(f.roomId, first, 'owner');
+  assert.deepEqual(plain(f.api.getRoomBlueprint(f.roomId, 'owner').model.photos), [marker(6, second, { angle: 180 })]);
+  assert.deepEqual(plain(f.api.getRoomBlueprint(f.roomId, 'owner').roomPhotos), [second]);
+  assert.deepEqual(plain(f.api.getRoomDetail(f.roomId, 'owner').blueprint.photos), [marker(6, second, { angle: 180 })]);
+});
+
+test('photo markers: the route saves and returns them', async t => {
+  const f = fixture(t);
+  const mine = addPhoto(f);
+  const route = loadRoute(f);
+  assert.equal((await route.PUT(request({ model: withPhotos(marker(5, mine)) }), params(f.roomId))).status, 200);
+  const get = await route.GET({}, params(f.roomId));
+  assert.deepEqual(plain(get.body.model.photos), [marker(5, mine)]);
+  assert.equal((await route.PUT(request({ model: withPhotos(marker(5, mine), marker(6, mine)) }), params(f.roomId))).status, 400, 'one marker per photo');
 });
