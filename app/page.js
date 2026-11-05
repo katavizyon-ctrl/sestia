@@ -1016,6 +1016,17 @@ function PageInner() {
     return true;
   }
 
+  // Yanlış eklenen fotoğrafı odadan siler (geri alınamaz, önce onay sorulur).
+  // Ondan üretilmiş öneri/analizler metinleriyle kalır.
+  async function deleteRoomPhoto(photo) {
+    if (!roomDetail || roomPhotoUploading) return;
+    if (!window.confirm('Bu fotoğraf odadan silinsin mi? Bu geri alınamaz.')) return;
+    const roomId = roomDetail.id;
+    const res = await fetch(`/api/rooms/${roomId}/photos/${photo.id}`, { method: 'DELETE' }).catch(() => null);
+    if (!res?.ok) { setRoomDetailError('Fotoğraf silinemedi. Tekrar dener misin?'); return; }
+    setRoomDetail((prev) => (prev && prev.id === roomId ? { ...prev, photos: prev.photos.filter((p) => p.id !== photo.id) } : prev));
+  }
+
   // "Gördüklerim"deki düzeltme odaya kaydedilir (yalnızca bu alan) ve öneriler
   // düzeltmeyle yeniden hazırlanır. Sonraki tüm öneri, plan ve sohbetler onu
   // fotoğraftaki görüntüden önce kabul eder.
@@ -1133,7 +1144,9 @@ function PageInner() {
         if (ideaRequestRef.current !== request) return;
         if (!res.ok) {
           setIdeaState({ suggestionId, ideaIndex, status: 'error', data: body,
-            error: planned.error === 'photo_too_large' ? 'Bu fotoğraf çok büyük. Daha küçük bir fotoğrafla tekrar dener misin?' : 'Adımlar hazırlanamadı. Tekrar dener misin?' });
+            error: planned.error === 'photo_too_large' ? 'Bu fotoğraf çok büyük. Daha küçük bir fotoğrafla tekrar dener misin?'
+              : planned.error === 'photo_deleted' ? 'Bu odada fotoğraf kalmadı. Bir fotoğraf ekleyip tekrar dener misin?'
+              : 'Adımlar hazırlanamadı. Tekrar dener misin?' });
           return;
         }
         body = planned;
@@ -1239,7 +1252,9 @@ function PageInner() {
         // Kesin bir ret: bu anahtar bir daha kullanılmaz, yeni deneme yeni anahtar alır.
         if (!res.ok && res.status >= 400 && res.status < 500 && body.error !== 'already_in_progress') ideaVisualOperationRef.current = null;
         if (body.status === 'failed') ideaVisualOperationRef.current = null;
-        setIdeaVisual({ status: 'error', error: 'Görsel oluşturulamadı. Tekrar dener misin?' });
+        setIdeaVisual({ status: 'error', error: body.error === 'photo_deleted'
+          ? 'Bu önerinin fotoğrafı odadan silindi; görselini oluşturamıyorum.'
+          : 'Görsel oluşturulamadı. Tekrar dener misin?' });
         return;
       }
       setIdeaVisual({ status: 'done', result: body });
@@ -1824,6 +1839,7 @@ function PageInner() {
           onSuggestHere={startSuggestionsInRoom}
           onViewSuggestion={openSavedSuggestion}
           onSaveGoal={saveRoomGoal}
+          onDeletePhoto={deleteRoomPhoto}
           onToggleTodo={toggleTodo}
           onRemoveTodo={removeTodo}
           onOpenTodo={(todo) => openIdea(todo.suggestionId, todo.ideaIndex, 'room-detail')}
@@ -2329,7 +2345,7 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
-function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo, onSaveGoal }) {
+function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo, onSaveGoal, onDeletePhoto }) {
   const [editingGoal, setEditingGoal] = useState(false);
   return (
     <section className="view">
@@ -2355,6 +2371,15 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                 {room.photos.map((photo) => (
                   <div key={photo.id} className="photothumb">
                     <img src={`/api/rooms/${room.id}/photos/${photo.id}`} alt="" />
+                    <button
+                      type="button"
+                      className="photothumb-remove"
+                      aria-label="Fotoğrafı sil"
+                      onClick={() => onDeletePhoto(photo)}
+                      disabled={uploading}
+                    >
+                      <CloseIcon style={{ width: 12, height: 12 }} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -2675,7 +2700,7 @@ function SuggestionsView({ room, photoId, status, suggestion, error, identityTyp
 
         {status === 'done' && suggestion && (
           <>
-            <img className="sestia-room-hero" src={photoUrl(suggestion.sourcePhotoId)} alt={room.name} />
+            <SafeImg className="sestia-room-hero" src={photoUrl(suggestion.sourcePhotoId)} alt={room.name} />
             {suggestion.seen?.length > 0 && (
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div className="label" style={{ color: 'var(--text-muted)' }}>Gördüklerim</div>
@@ -2812,6 +2837,21 @@ function RoomGoalForm({ initialGoal, initialStory, submitLabel, onSubmit, onCanc
       {onCancel && <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>Vazgeç</button>}
     </form>
   );
+}
+
+// Geçmiş kayıtlarda gösterilen bir oda fotoğrafı sonradan silinmiş olabilir:
+// kırık görsel yerine kısa bir not.
+function SafeImg({ src, alt, className, style }) {
+  const [missing, setMissing] = useState(false);
+  if (missing) {
+    return (
+      <div className={className} role="img" aria-label="Fotoğraf silindi"
+        style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 72, background: 'var(--surface-alt)', color: 'var(--text-muted)', fontSize: 12.5, textAlign: 'center', padding: 8 }}>
+        Fotoğraf silindi
+      </div>
+    );
+  }
+  return <img src={src} alt={alt} className={className} style={style} onError={() => setMissing(true)} />;
 }
 
 // "Gördüklerim"deki düzeltme formu. onSubmit(text) başarıda true döner.
@@ -3373,7 +3413,7 @@ function RoomReviewView({ photos, analyzing, error, items, onToggleExclude, onSe
         <div className="photostrip">
           {photos.map((photo) => (
             <div key={photo.id} className="photothumb photothumb-static">
-              <img src={photo.url} alt="Taranan oda" />
+              <SafeImg src={photo.url} alt="Taranan oda" />
             </div>
           ))}
         </div>

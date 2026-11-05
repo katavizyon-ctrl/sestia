@@ -27,7 +27,7 @@ function loadApi(db) {
     visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),
   };
   vm.createContext(ctx);
-  vm.runInContext(code + ';globalThis.api={createRoom,creations,roomSuggestions,getRoomDetail,getRoomName,logEvent};', ctx);
+  vm.runInContext(code + ';globalThis.api={createRoom,creations,roomSuggestions,getRoomDetail,getRoomsForDevice,getRoomName,getRoomPhotoFile,deleteRoomPhoto,logEvent};', ctx);
   return ctx.api;
 }
 
@@ -144,6 +144,7 @@ function loadRoute(file, f, { owner = 'owner', account = true, suggestIdeaPlan, 
     getIdentity: async () => (owner ? { id: owner } : null),
     isAccountIdentity: () => account,
     roomSuggestions: f.api.roomSuggestions, getRoomName: f.api.getRoomName, logEvent: f.api.logEvent,
+    getRoomPhotoFile: f.api.getRoomPhotoFile, deleteRoomPhoto: f.api.deleteRoomPhoto, NO_STORE: undefined,
     MAX_SUGGESTION_IMAGE_BYTES: 5 * 1024 * 1024,
     openaiImage: fakeImage,
     suggestIdeaPlan: async (...args) => {
@@ -332,4 +333,62 @@ test('suggestIdeaPlan: malformed plans and impossible ideas are rejected', async
   }
   const { suggestIdeaPlan } = loadSuggestIdeaPlan(JSON.stringify(PLAN));
   await assert.rejects(suggestIdeaPlan(IMAGE, 'Salon', IDEAS, 5), /invalid_plan_request/);
+});
+
+// ---------------- deleting a room photo ----------------
+
+const PHOTO_ROUTE = 'app/api/rooms/[id]/photos/[photoId]/route.js';
+const photoParams = (f, photoId, roomId = f.roomId) => ({ params: Promise.resolve({ id: String(roomId), photoId: String(photoId) }) });
+
+test('photo delete: only the owner, only under its room; the file goes, the cover moves on, suggestions stay', async t => {
+  const f = fixture(t);
+  const second = f.api.creations.photo('owner', f.roomId, 'second-photo', Buffer.from('second'), 'image/jpeg');
+  const firstFile = path.join(f.directory, 'data', 'room-photos', f.api.getRoomPhotoFile(f.photoId, 'owner').filename);
+  assert.ok(fs.existsSync(firstFile));
+
+  const otherRoom = f.api.createRoom('owner', 'Mutfak');
+  assert.equal((await loadRoute(PHOTO_ROUTE, f, { owner: 'stranger' }).route.DELETE({}, photoParams(f, f.photoId))).status, 404);
+  assert.equal((await loadRoute(PHOTO_ROUTE, f).route.DELETE({}, photoParams(f, f.photoId, otherRoom.id))).status, 404);
+  assert.equal((await loadRoute(PHOTO_ROUTE, f, { owner: null }).route.DELETE({}, photoParams(f, f.photoId))).status, 401);
+  assert.ok(fs.existsSync(firstFile), 'nothing deleted by refused requests');
+
+  const res = await loadRoute(PHOTO_ROUTE, f).route.DELETE({}, photoParams(f, f.photoId));
+  assert.equal(res.status, 200);
+  assert.ok(!fs.existsSync(firstFile), 'the file is removed from disk');
+  const detail = f.api.getRoomDetail(f.roomId, 'owner');
+  assert.deepEqual(plain(detail.photos.map((p) => p.id)), [second.id]);
+  assert.equal(f.db.prepare('SELECT cover_photo_id AS c FROM rooms WHERE id = ?').get(f.roomId).c, second.id, 'the next photo becomes the cover');
+  assert.equal(f.api.roomSuggestions.get(f.suggestionId, 'owner').sourcePhotoId, f.photoId, 'the suggestion made from it is kept');
+  assert.ok(f.db.prepare('SELECT deleted_at AS d FROM room_photos WHERE id = ?').get(f.photoId).d, 'the row is only marked, so foreign keys to it still hold');
+  assert.equal(f.api.getRoomPhotoFile(f.photoId, 'owner'), undefined, 'a deleted photo is no longer served');
+  assert.equal(f.api.getRoomsForDevice('owner').find((r) => r.id === f.roomId).coverPhotoId, second.id, 'the room card shows the next photo');
+  assert.equal((await loadRoute(PHOTO_ROUTE, f).route.DELETE({}, photoParams(f, f.photoId))).status, 404, 'already gone');
+});
+
+test('photo delete: the plan falls back to the room\'s other photos; with none left it says so', async t => {
+  const f = fixture(t);
+  const second = f.api.creations.photo('owner', f.roomId, 'second-photo', Buffer.from('second-bytes'), 'image/jpeg');
+  f.api.deleteRoomPhoto(f.roomId, f.photoId, 'owner');
+  const { route, calls } = loadRoute(IDEA_ROUTE, f);
+  const planned = await route.POST({}, ideaParams(f));
+  assert.equal(planned.status, 200);
+  assert.equal(Buffer.from(calls.planArgs[0].base64, 'base64').toString(), 'second-bytes');
+
+  f.api.deleteRoomPhoto(f.roomId, second.id, 'owner');
+  const { route: route2, calls: calls2 } = loadRoute(IDEA_ROUTE, f);
+  const none = await route2.POST({}, ideaParams(f, { ideaIndex: '1' }));
+  assert.equal(none.status, 409);
+  assert.equal(none.body.error, 'photo_deleted');
+  assert.equal(calls2.plan, 0);
+});
+
+test('photo delete: "Nasıl görünür?" on an idea whose photo was deleted says so, with no claim and no paid call', async t => {
+  const f = fixture(t);
+  f.api.deleteRoomPhoto(f.roomId, f.photoId, 'owner');
+  const { route, calls } = loadRoute(VISUAL_ROUTE, f);
+  const res = await postVisual(route, f);
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, 'photo_deleted');
+  assert.equal(calls.image, 0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM room_idea_visuals').get().n, 0);
 });

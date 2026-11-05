@@ -79,10 +79,20 @@ function defaultEmptyStateCopy(productContext, entryLabel) {
 // kullanır — ikinci bir slider icat edilmez.
 export function BeforeAfterSlider({ beforeSrc, afterSrc, width, height }) {
   const [value, setValue] = useState(50);
+  const [beforeMissing, setBeforeMissing] = useState(false);
   const ratio = width && height ? `${width} / ${height}` : '3 / 4';
+  // The original photo was deleted from the room: show the result alone.
+  if (beforeMissing) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <img className="sestia-baf-img" src={afterSrc} alt="Sonra" style={{ position: 'static', aspectRatio: ratio, width: '100%', borderRadius: 20, objectFit: 'cover' }} />
+        <p className="muted">Önceki fotoğraf odadan silindi.</p>
+      </div>
+    );
+  }
   return (
     <div className="sestia-baf" style={{ aspectRatio: ratio }}>
-      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" />
+      <img className="sestia-baf-img" src={beforeSrc} alt="Önce" onError={() => setBeforeMissing(true)} />
       <div className="sestia-baf-after-wrap" style={{ clipPath: `inset(0 ${100 - value}% 0 0)` }}>
         <img className="sestia-baf-img" src={afterSrc} alt="Sonra" />
       </div>
