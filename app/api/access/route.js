@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import accessTokens from '@/lib/accessToken.cjs';
+import { openOwnerSession } from '@/lib/ownerEntry';
 import attemptLimiter from '@/lib/attemptLimiter.cjs';
 
 export const runtime = 'nodejs';
@@ -42,5 +44,13 @@ export async function POST(req) {
     maxAge: 60 * 60 * 24 * 180,
     path: '/',
   });
+  // Owner entry: the right code also signs the owner into their own account
+  // for 30 days, so no name/email/guest screens follow.
+  try {
+    openOwnerSession(await cookies(), res);
+  } catch (error) {
+    // The access cookie still works; the app then shows its usual entry.
+    console.error('owner_entry_failed', error?.message);
+  }
   return res;
 }

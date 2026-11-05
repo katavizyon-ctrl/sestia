@@ -116,3 +116,48 @@ test('credentials are versioned, purpose separated, signed and reject legacy/for
   assert.equal(credentials.verify('guest',token+'x',s),null);assert.equal(credentials.verify('guest',token,'other'),null);
   assert.equal(credentials.verify('guest',`${id}.${Date.now()+180*86400000}.old-signature`,s),null);
 });
+
+// ---------------- owner entry (lib/ownerEntry.js) ----------------
+const { OWNER_TIMING } = require('../lib/sessionPolicy.cjs');
+const DAY = 24 * 60 * 60 * 1000;
+test('owner entry: an account session that stays signed in for 30 days, warned on day 29', () => {
+  const f = fixture();
+  const s = f.store.owner(f.family.id, 'owner-user');
+  assert.equal(s.identityType, 'account');
+  assert.equal(s.ownerId, 'owner-user');
+  assert.deepEqual({ ...OWNER_TIMING }, { idleTimeoutMs: 30 * DAY, warningAfterMs: 29 * DAY });
+  f.at(29 * DAY - 1);
+  assert.equal(f.store.check(s.sessionId, f.family.id).warning, false);
+  f.at(29 * DAY);
+  const warned = f.store.check(s.sessionId, f.family.id);
+  assert.equal(warned.state, 'active'); assert.equal(warned.warning, true);
+  f.at(30 * DAY);
+  assert.equal(f.store.check(s.sessionId, f.family.id).state, 'session_expired');
+});
+test('owner entry: activity pushes the 30-day deadline out again', () => {
+  const f = fixture();
+  const s = f.store.owner(f.family.id, 'owner-user');
+  f.at(20 * DAY);
+  const renewed = f.store.activity(s.sessionId, f.family.id, f.now(), 'click');
+  assert.equal(renewed.idleExpiresAt, f.now() + 30 * DAY);
+  f.at(45 * DAY);
+  assert.equal(f.store.check(s.sessionId, f.family.id).state, 'active', '25 days after the last activity');
+});
+test('owner entry: replaces an earlier session in the same browser; other kinds keep their short timing', () => {
+  const f = fixture();
+  const old = f.start('account', 'owner-user');
+  const s = f.store.owner(f.family.id, 'owner-user');
+  assert.equal(f.store.check(old.sessionId, f.family.id).state, 'session_replaced');
+  assert.equal(f.store.check(s.sessionId, f.family.id).state, 'active');
+  const g = fixture().start('guest');
+  assert.equal(g.idleExpiresAt - 1000000, 300000, 'guests unchanged');
+  assert.throws(() => f.store.owner(randomUUID(), 'owner-user'), /session_required/, 'unknown family');
+  assert.throws(() => f.store.owner(f.family.id, ''), /invalid_account/);
+});
+test('owner entry: the owner cookie is its own signed purpose', () => {
+  const id = randomUUID();
+  const signed = credentials.sign('owner', id, 'secret');
+  assert.equal(credentials.verify('owner', signed, 'secret'), id);
+  assert.equal(credentials.verify('guest', signed, 'secret'), null, 'an owner cookie is not a guest cookie');
+  assert.equal(credentials.verify('owner', credentials.sign('guest', id, 'secret'), 'secret'), null);
+});

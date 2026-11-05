@@ -276,6 +276,8 @@ function PageInner() {
         // timeout's remount), not a connectivity error. Show the existing
         // guest/account entry experience; no new screen.
         if (body.error === 'session_required') {
+          // Owner entry: the access code signs the owner in; no guest/email screens.
+          if (body.ownerEntry) { window.location.replace('/giris'); return; }
           setSignInRequired(null);
           setHomeError(null);
           setHomeState((prev) => ({ ...prev, emailReady: Boolean(body.emailReady) }));
@@ -2356,6 +2358,52 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
+// The room's saved plan, drawn read-only to fit its card: walls at their real
+// thickness, doors (with swing) and windows on their walls, and the room's
+// overall width × depth. Units are centimetres, as in the editor.
+function FloorPlanPreview({ plan }) {
+  const walls = plan.walls || [];
+  const points = walls.flatMap((w) => [w.a, w.b]);
+  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const width = maxX - minX, depth = maxY - minY;
+  // Room for a door's swing, which can reach outside the walls.
+  const widestDoor = Math.max(0, ...(plan.openings || []).filter((o) => o.type === 'door').map((o) => o.width));
+  const pad = Math.max(40, Math.max(width, depth) * 0.08, widestDoor + 12);
+  const viewBox = `${minX - pad} ${minY - pad} ${width + pad * 2} ${depth + pad * 2}`;
+  const byId = new Map(walls.map((w) => [w.id, w]));
+  const metres = (cm) => (cm / 100).toFixed(2).replace('.', ',');
+  return (
+    <div style={{ background: 'var(--surface-alt)', borderRadius: 14, padding: 8 }}>
+      <svg viewBox={viewBox} role="img" aria-label={`Oda planı, ${walls.length} duvar`} style={{ width: '100%', maxHeight: 260, display: 'block' }}>
+        {walls.map((w) => (
+          <line key={w.id} x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke="var(--text)" strokeWidth={w.thickness || 12} strokeLinecap="square" />
+        ))}
+        {(plan.openings || []).map((o) => {
+          const w = byId.get(o.wall);
+          if (!w) return null;
+          const t = Math.max(0, Math.min(1, o.t));
+          const cx = w.a.x + (w.b.x - w.a.x) * t, cy = w.a.y + (w.b.y - w.a.y) * t;
+          const angle = Math.atan2(w.b.y - w.a.y, w.b.x - w.a.x) * 180 / Math.PI;
+          const half = o.width / 2, th = (w.thickness || 12) + 4;
+          const color = o.type === 'door' ? 'var(--terracotta)' : 'var(--slate)';
+          return (
+            <g key={o.id} transform={`translate(${cx} ${cy}) rotate(${angle})`}>
+              <rect x={-half} y={-th / 2} width={o.width} height={th} fill="var(--surface-alt)" stroke={color} strokeWidth={3} />
+              {o.type === 'door'
+                ? <path d={`M ${-half} 0 L ${-half} ${-o.width} A ${o.width} ${o.width} 0 0 1 ${half} 0`} fill="none" stroke={color} strokeWidth={2} strokeDasharray="6 4" />
+                : <line x1={-half} y1={0} x2={half} y2={0} stroke={color} strokeWidth={2} />}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="muted" style={{ fontSize: 12.5, textAlign: 'center', marginTop: 4 }}>
+        {metres(width)} × {metres(depth)} m · {walls.length} duvar · {(plan.openings || []).length} açıklık
+      </div>
+    </div>
+  );
+}
+
 // "Oda Planı": pick a room, then its measured blueprint opens on its own page.
 function FloorPlanRoomsView({ rooms, loading, error, onBack, onOpenRoom, onGoRooms }) {
   return <section className="view"><div className="scroll">
@@ -2446,9 +2494,18 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
               </div>
             )}
 
-            <a href={`/rooms/${room.id}/blueprint`} className="btn-outline" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', padding: '13px 16px', marginBottom: 14 }}>
-              Oda planını aç
-            </a>
+            {room.blueprint ? (
+              <a href={`/rooms/${room.id}/blueprint`} className="card sestia-plan-card" aria-label="Oda planını düzenle"
+                style={{ display: 'flex', flexDirection: 'column', gap: 8, textDecoration: 'none', color: 'inherit', marginBottom: 14 }}>
+                <div className="label" style={{ color: 'var(--text-muted)' }}>Oda planı</div>
+                <FloorPlanPreview plan={room.blueprint} />
+                <span className="sestia-text-link" style={{ alignSelf: 'flex-start' }}>Planı düzenle →</span>
+              </a>
+            ) : (
+              <a href={`/rooms/${room.id}/blueprint`} className="btn-outline" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', padding: '13px 16px', marginBottom: 14 }}>
+                Oda planını çiz
+              </a>
+            )}
 
             <CaptureButtons
               onFile={onAddPhoto}

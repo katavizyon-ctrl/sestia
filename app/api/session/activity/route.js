@@ -4,6 +4,7 @@ import { sessions } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import credentials from '@/lib/sessionCredentials.cjs';
 import { isSameOriginRequest } from '@/lib/sameOrigin.cjs';
+import { ownerSessionFrom } from '@/lib/ownerEntry';
 
 export const runtime = 'nodejs';
 
@@ -18,8 +19,12 @@ export async function POST(req) {
   const familyId = scopeRaw && credentials.verify('scope', scopeRaw, process.env.AUTH_SECRET);
   if (!familyId) return NextResponse.json({ error: 'session_required' }, { status: 401 });
 
-  const authSession = await auth();
-  const sessionId = authSession?.sestiaSid
+  // An active owner session (lib/ownerEntry.js) is the one being used, same
+  // precedence as lib/session.js.
+  const owner = ownerSessionFrom(jar);
+  const ownerActive = owner && owner.familyId === familyId && sessions.check(owner.sessionId, familyId).state === 'active';
+  const authSession = ownerActive ? null : await auth();
+  const sessionId = (ownerActive && owner.sessionId) || authSession?.sestiaSid
     || (() => {
       const guestRaw = jar.get(credentials.GUEST_COOKIE)?.value;
       return guestRaw ? credentials.verify('guest', guestRaw, process.env.AUTH_SECRET) : null;

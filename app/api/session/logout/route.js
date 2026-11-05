@@ -4,6 +4,7 @@ import { sessions } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import credentials from '@/lib/sessionCredentials.cjs';
 import { isSameOriginRequest } from '@/lib/sameOrigin.cjs';
+import { ownerSessionFrom } from '@/lib/ownerEntry';
 
 export const runtime = 'nodejs';
 
@@ -19,10 +20,17 @@ export async function POST(req) {
   const res = NextResponse.json({ ok: true });
   if (!familyId) return res;
 
+  const owner = ownerSessionFrom(jar);
+  if (owner && owner.familyId === familyId) sessions.logout(owner.sessionId, familyId);
+  if (jar.get(credentials.OWNER_COOKIE)) res.cookies.set(credentials.OWNER_COOKIE, '', { path: '/', maxAge: 0 });
+
   const authSession = await auth();
   if (authSession?.sestiaSid) {
     sessions.logout(authSession.sestiaSid, familyId);
     res.cookies.delete('authjs.session-token');
+    // On https Auth.js names its cookie with the __Secure- prefix; clearing
+    // it needs the Secure attribute.
+    res.cookies.set('__Secure-authjs.session-token', '', { path: '/', maxAge: 0, secure: true, httpOnly: true, sameSite: 'lax' });
   } else {
     const guestRaw = jar.get(credentials.GUEST_COOKIE)?.value;
     const guestSessionId = guestRaw ? credentials.verify('guest', guestRaw, process.env.AUTH_SECRET) : null;
