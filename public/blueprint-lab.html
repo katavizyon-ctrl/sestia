@@ -164,7 +164,7 @@ $('fit').onclick=()=>{view={x:0,y:0,w:900,h:680};setView()};
 $('dims').onchange=render;
 if(!embedded){try{let d=localStorage.getItem('sestia-blueprint-lab-v1');if(d){let m=JSON.parse(d);if(Array.isArray(m.walls)&&Array.isArray(m.openings))model=m}}catch(e){}}
 window.addEventListener('message',e=>{if(!embedded||e.origin!==location.origin||e.source!==parent)return;const data=e.data||{};if(data.type==='sestia:blueprint:load'&&!initialized){roomPhotos=Array.isArray(data.photos)?data.photos.filter(p=>p&&Number.isSafeInteger(p.id)&&typeof p.url==='string'&&p.url.startsWith('/api/rooms/')):[];let m=data.model;if(m&&Array.isArray(m.walls)&&Array.isArray(m.openings)){model=clone(m);if(!Array.isArray(model.photos))model.photos=[];model.next=nextId(model)}initialized=true;$('photoPanel').hidden=!markers().length&&tool!=='photo';history=[];future=[];selected=null;chain=null;drag=null;render();updateHistory();$('saveState').textContent='Ready';msg('Room blueprint loaded. Changes are saved to this SESTIA room.')}if(data.type==='sestia:blueprint:saved'){$('saveState').textContent='Saved to room'}if(data.type==='sestia:blueprint:error'){$('saveState').textContent='Save failed'}});
-if(embedded){document.getElementById('saveState').textContent='Loading room…';parent.postMessage({type:'sestia:blueprint:ready'},location.origin)}
+if(embedded){document.querySelector('header').style.display='none';document.getElementById('saveState').textContent='Loading room…';parent.postMessage({type:'sestia:blueprint:ready'},location.origin)}
 updateHistory();render();setView();
 })();
 </script></body></html>

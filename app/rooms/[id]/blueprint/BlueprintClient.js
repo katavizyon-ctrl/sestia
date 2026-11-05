@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from 'react';
 // left.
 const SAVE_DELAY_MS = 500;
 const RETRY_DELAY_MS = 3000;
+// Saving is automatic; this is a status line, not a button.
+const SAVED = '✓ Odaya kaydedildi';
 
 export default function BlueprintClient({ roomId }) {
   const frame = useRef(null);
@@ -40,7 +42,7 @@ export default function BlueprintClient({ roomId }) {
         if (!mounted) return;
         loaded = data.model;
         roomPhotos = (data.roomPhotos || []).map((id) => ({ id, url: `/api/rooms/${encodeURIComponent(roomId)}/photos/${id}` }));
-        setStatus(data.updatedAt ? 'Kayıtlı plan yüklendi.' : 'Yeni plan hazır.');
+        setStatus(data.updatedAt ? SAVED : 'Çizdiklerin odaya otomatik kaydedilir');
         setShowEditor(true);
         initialize();
       } catch (e) {
@@ -57,7 +59,7 @@ export default function BlueprintClient({ roomId }) {
       try {
         const response = await put(snapshot);
         if (!response.ok) throw Error(`HTTP ${response.status}`);
-        if (mounted && !pending) { setStatus('Plan kaydedildi.'); post({ type: 'sestia:blueprint:saved' }); }
+        if (mounted && !pending) { setStatus(SAVED); post({ type: 'sestia:blueprint:saved' }); }
       } catch {
         if (!pending) pending = snapshot; // a newer change wins over the failed one
         if (mounted) {
@@ -103,9 +105,9 @@ export default function BlueprintClient({ roomId }) {
 
   return <main style={{ minHeight: '100vh', background: '#eef3ee', color: '#213c30' }}>
     <nav style={{ padding: '12px 20px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 12, background: '#fff' }}>
-      <a href="/" style={{ color: '#286e50', textDecoration: 'none', fontWeight: 600 }}>← SESTIA</a>
+      <a href={`/?room=${encodeURIComponent(roomId)}`} style={{ color: '#286e50', textDecoration: 'none', fontWeight: 600 }}>← Odaya dön</a>
       <strong>Oda Planı</strong>
-      <span role="status" aria-live="polite" style={{ fontSize: 12 }}>{status}</span>
+      <span role="status" aria-live="polite" style={{ fontSize: 13, color: status === SAVED ? '#286e50' : '#5b6b63', fontWeight: status === SAVED ? 600 : 400 }}>{status}</span>
     </nav>
     {error ? <div role="alert" style={{ margin: 24, padding: 18, background: '#fff4ed', borderRadius: 8 }}>{error}</div> : showEditor &&
       <iframe ref={frame} src="/blueprint-lab.html?embedded=1" title="Oda Planı düzenleyicisi" style={{ width: '100%', height: 'calc(100vh - 60px)', border: 0, display: 'block' }} />}
