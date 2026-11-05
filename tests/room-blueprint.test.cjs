@@ -28,7 +28,7 @@ function loadApi(db) {
     visitMetadataStoreModule: require('../lib/visitMetadataStore.cjs'),
   };
   vm.createContext(ctx);
-  vm.runInContext(code + ';globalThis.api={createRoom,getRoomBlueprint,putRoomBlueprint};', ctx);
+  vm.runInContext(code + ';globalThis.api={createRoom,getRoomBlueprint,putRoomBlueprint,getRoomDetail};', ctx);
   return ctx.api;
 }
 
@@ -180,4 +180,14 @@ test('blueprint route: extra fields a client sends are not stored', async t => {
   await loadRoute(f).PUT(request({ model }), params(f.roomId));
   const stored = f.db.prepare('SELECT model_json FROM room_blueprints').get().model_json;
   assert.ok(!stored.includes('script'));
+});
+
+test('room details carry the saved plan for the room screen preview; none, or an empty one, is null', t => {
+  const f = fixture(t);
+  assert.equal(f.api.getRoomDetail(f.roomId, 'owner').blueprint, null, 'no plan yet');
+  f.api.putRoomBlueprint(f.roomId, 'owner', { walls: [], openings: [], next: 1 });
+  assert.equal(f.api.getRoomDetail(f.roomId, 'owner').blueprint, null, 'an emptied plan shows no preview');
+  f.api.putRoomBlueprint(f.roomId, 'owner', L_ROOM());
+  assert.deepEqual(plain(f.api.getRoomDetail(f.roomId, 'owner').blueprint), { walls: L_ROOM().walls, openings: L_ROOM().openings });
+  assert.equal(f.api.getRoomDetail(f.roomId, 'stranger'), null, 'still only the owner');
 });
