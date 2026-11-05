@@ -2375,11 +2375,13 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
 // overall width × depth. Units are centimetres, as in the editor. P2: photos
 // placed on the plan show as numbered markers facing their direction (numbers
 // follow the room's photo order, as in the editor); tapping one calls
-// onOpenPhoto with that photo's id.
+// onOpenPhoto with that photo's id. P5: `pieces` draws a redesign layout
+// instead of the photo markers — numbered furniture boxes, the front edge
+// thicker, a piece with a failed check in red.
 const PLAN_CONE = 110, PLAN_HALF_FOV = 30;
-function FloorPlanPreview({ plan, photoOrder = [], onOpenPhoto }) {
+function FloorPlanPreview({ plan, photoOrder = [], onOpenPhoto, pieces = null }) {
   const walls = plan.walls || [];
-  const markers = plan.photos || [];
+  const markers = pieces ? [] : plan.photos || [];
   const points = [...walls.flatMap((w) => [w.a, w.b]), ...markers.map((m) => ({ x: m.x, y: m.y }))];
   const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -2410,6 +2412,19 @@ function FloorPlanPreview({ plan, photoOrder = [], onOpenPhoto }) {
               {o.type === 'door'
                 ? <path d={`M ${-half} 0 L ${-half} ${-o.width} A ${o.width} ${o.width} 0 0 1 ${half} 0`} fill="none" stroke={color} strokeWidth={2} strokeDasharray="6 4" />
                 : <line x1={-half} y1={0} x2={half} y2={0} stroke={color} strokeWidth={2} />}
+            </g>
+          );
+        })}
+        {(pieces || []).map((p) => {
+          const color = p.bad ? 'var(--terracotta)' : 'var(--eucalyptus, #2f6b52)';
+          const front = { x1: [p.x1, p.y1, p.x1, p.y2], x2: [p.x2, p.y1, p.x2, p.y2], y1: [p.x1, p.y1, p.x2, p.y1], y2: [p.x1, p.y2, p.x2, p.y2] }[p.front];
+          const size = Math.max(14, Math.min(26, Math.min(p.x2 - p.x1, p.y2 - p.y1) * 0.45));
+          return (
+            <g key={p.key}>
+              <title>{p.name}</title>
+              <rect x={p.x1} y={p.y1} width={p.x2 - p.x1} height={p.y2 - p.y1} rx={4} fill={color} fillOpacity={0.18} stroke={color} strokeWidth={2.5} />
+              {front && <line x1={front[0]} y1={front[1]} x2={front[2]} y2={front[3]} stroke={color} strokeWidth={7} strokeLinecap="round" />}
+              <text x={(p.x1 + p.x2) / 2} y={(p.y1 + p.y2) / 2 + size * 0.35} textAnchor="middle" fontSize={size} fontWeight={700} fill={color}>{p.n}</text>
             </g>
           );
         })}
@@ -2451,6 +2466,118 @@ function FloorPlanRoomsView({ rooms, loading, error, onBack, onOpenRoom, onGoRoo
     <button className="btn-outline" onClick={onGoRooms}>{rooms.length ? 'Odalarımı yönet' : 'Oda ekle'}</button>
   </div></section>;
 }
+// "Odayı yeniden yap" (P5 v1): three furniture layouts on the room's own plan.
+// The furniture and its sizes are estimated from the photos; whether a layout
+// fits (inside the room, no overlaps, nothing in a wall or a door's way) was
+// checked on the server, and anything that failed is shown, not hidden.
+const FRONT_EDGE = { 0: 'y2', 90: 'x1', 180: 'y1', 270: 'x2' };
+function redesignPieces(redesign, layout) {
+  const bad = new Set(layout.issues.flatMap((issue) => issue.keys));
+  return layout.items.map((item) => {
+    const index = redesign.furniture.findIndex((f) => f.key === item.key);
+    const f = redesign.furniture[index];
+    const turned = item.rotation === 90 || item.rotation === 270;
+    const w = turned ? f.d : f.w, d = turned ? f.w : f.d;
+    return { key: item.key, n: index + 1, name: f.name, x1: item.x - w / 2, y1: item.y - d / 2, x2: item.x + w / 2, y2: item.y + d / 2, front: FRONT_EDGE[item.rotation], bad: bad.has(item.key) };
+  });
+}
+function RoomRedesignCard({ room }) {
+  const [redesign, setRedesign] = useState(room.redesign || null);
+  const [selected, setSelected] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { setRedesign(room.redesign || null); setSelected(0); }, [room.id, room.redesign?.id]);
+  const hasPhotos = room.photos.length > 0;
+  async function start() {
+    setBusy(true); setError('');
+    try {
+      const res = await fetch(`/api/rooms/${room.id}/redesign`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error === 'photos_required' ? 'Önce odaya en az bir fotoğraf ekle.'
+          : body.error === 'plan_required' ? 'Önce odanın planını çiz.'
+          : res.status === 401 ? 'Oturumun kapanmış. Lütfen yeniden giriş yap.'
+          : 'Yerleşimleri çıkaramadım. Tekrar dener misin?');
+      }
+      setRedesign(body); setSelected(0);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const layout = redesign?.layouts?.[selected];
+  const nameOf = (key) => redesign.furniture.find((f) => f.key === key)?.name || key;
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+      <div className="label" style={{ color: 'var(--text-muted)' }}>Odayı yeniden yap</div>
+      {!redesign && !busy && (
+        <div className="muted" style={{ lineHeight: 1.45 }}>
+          {hasPhotos
+            ? 'Planına ve fotoğraflarına bakıp odandaki mobilyalarla 3 farklı yerleşim önereyim; her biri gerçek ölçülerine göre kontrol edilir.'
+            : 'Yerleşim önerebilmem için odadaki mobilyaları görmem lazım: önce birkaç fotoğraf ekle.'}
+        </div>
+      )}
+      {busy && (
+        <div className="muted" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="spinner" style={{ width: 20, height: 20, flex: 'none' }} />
+          Odanı yeniden kuruyorum… Bu 1-3 dakika sürebilir.
+        </div>
+      )}
+      {error && <div className="errbox" style={{ margin: 0 }}>{error}</div>}
+      {redesign && layout && !busy && (
+        <>
+          {redesign.stale && <div className="muted" style={{ fontSize: 12.5 }}>Plan bu önerilerden sonra değişti; güncel plana göre yeniden önerebilirim.</div>}
+          <div role="tablist" aria-label="Yerleşimler" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {redesign.layouts.map((l, i) => (
+              <button key={i} type="button" role="tab" aria-selected={i === selected} onClick={() => setSelected(i)}
+                className={i === selected ? 'btn-primary' : 'btn-outline'}
+                aria-label={`Seçenek ${i + 1}: ${l.title}`}
+                style={{ flex: '1 1 0', minWidth: 0, padding: '8px 6px', fontSize: 13, whiteSpace: 'nowrap' }}>
+                Seçenek {i + 1}{l.issues.length ? ' ⚠' : ''}
+              </button>
+            ))}
+          </div>
+          <FloorPlanPreview plan={room.blueprint} pieces={redesignPieces(redesign, layout)} />
+          <div style={{ fontWeight: 600, fontSize: 15 }}>{layout.title}</div>
+          <div style={{ lineHeight: 1.45, fontSize: 14 }}>{layout.idea}</div>
+          {layout.why && <div className="muted" style={{ lineHeight: 1.45, fontSize: 13.5 }}>{layout.why}</div>}
+          {layout.issues.length === 0
+            ? <div style={{ fontSize: 13, color: 'var(--eucalyptus)' }}>✓ Ölçü kontrolü: her şey odanın içinde, üst üste binen yok, kapıların önü açık.</div>
+            : <div style={{ fontSize: 13, color: 'var(--terracotta)' }}>
+                <div style={{ fontWeight: 600 }}>⚠ Ölçü kontrolü bunları buldu:</div>
+                <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{layout.issues.map((issue, i) => <li key={i}>{issue.text}</li>)}</ul>
+              </div>}
+          <div>
+            <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 4 }}>Mobilyalar (fotoğraftan tahmini ölçüler)</div>
+            <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.5, fontSize: 13.5 }}>
+              {redesign.furniture.map((f) => {
+                const out = layout.removed.find((r) => r.key === f.key);
+                return <li key={f.key} style={out ? { color: 'var(--text-muted)' } : undefined}>
+                  {f.name} · {f.w}×{f.d} cm{out ? ` — odadan çıkıyor${out.reason ? `: ${out.reason}` : ''}` : ''}
+                </li>;
+              })}
+            </ol>
+          </div>
+          <div>
+            <div className="label" style={{ color: 'var(--text-muted)', marginBottom: 4 }}>Taşıma planı</div>
+            <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.5, fontSize: 13.5 }}>
+              {layout.steps.map((step, i) => <li key={i}>{step}</li>)}
+            </ol>
+          </div>
+          {redesign.unseen && <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.4 }}>Göremediğim: {redesign.unseen}</div>}
+          <div className="muted" style={{ fontSize: 12 }}>Kalın kenar mobilyanın ön yüzü. {layout.removed.length ? `Çıkanlar: ${layout.removed.map((r) => nameOf(r.key)).join(', ')}.` : ''}</div>
+        </>
+      )}
+      {!busy && (
+        <button type="button" className={redesign ? 'btn-outline' : 'btn-primary'} disabled={!hasPhotos} onClick={start}>
+          {redesign ? 'Yeniden öner' : '3 yerleşim öner'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo, onSaveGoal, onDeletePhoto }) {
   const [editingGoal, setEditingGoal] = useState(false);
   const [planPhoto, setPlanPhoto] = useState(null); // a photo opened from its plan marker
@@ -2548,7 +2675,9 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                 {room.blueprint.photos?.length > 0 && <div className="muted" style={{ fontSize: 12.5 }}>Fotoğrafı görmek için plandaki numaraya dokun.</div>}
                 <a href={`/rooms/${room.id}/blueprint`} className="sestia-text-link" style={{ alignSelf: 'flex-start' }}>Planı düzenle →</a>
               </div>
-            ) : (
+            ) : null}
+            {room.blueprint && <RoomRedesignCard room={room} />}
+            {!room.blueprint && (
               <a href={`/rooms/${room.id}/blueprint`} className="btn-outline" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', padding: '13px 16px', marginBottom: 14 }}>
                 Oda planını çiz
               </a>
