@@ -7,6 +7,7 @@ import { getIdentity } from '@/lib/identity';
 import { isEmailReady } from '@/lib/auth';
 import { authUser } from '@/lib/authSchema';
 import privateAccess from '@/lib/privateAccess.cjs';
+import { ownerEntryEnabled } from '@/lib/ownerEntry';
 
 export const runtime = 'nodejs';
 
@@ -26,7 +27,9 @@ export async function GET() {
     // Session V2: no active guest/account session yet (never established,
     // idle-expired, or revoked) — distinct from a real connectivity/auth
     // failure so the client shows guest/account entry, not a generic error.
-    return NextResponse.json({ error: 'session_required', emailReady: isEmailReady() }, { status: 401 });
+    // ownerEntry: the client sends the owner back to the access-code screen,
+    // which signs them in again (lib/ownerEntry.js).
+    return NextResponse.json({ error: 'session_required', emailReady: isEmailReady(), ownerEntry: ownerEntryEnabled() }, { status: 401 });
   }
   const state = getState(identity.id);
   const homeMessage = getHomeMessage(identity.id);

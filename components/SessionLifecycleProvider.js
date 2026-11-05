@@ -7,6 +7,7 @@ const { isQualifyingActivityEvent, shouldSendActivityReport, remainingMs, warnin
 const BROADCAST_CHANNEL_NAME = 'sestia-session-v2';
 const STORAGE_NOTIFY_KEY = 'sestia_session_v2_notify';
 const ESTABLISH_LOCK_NAME = 'sestia-session-establish';
+const MAX_TIMER_MS = 2_000_000_000; // below setTimeout's 2^31-1 ms limit
 
 const SessionLifecycleContext = createContext(null);
 
@@ -54,11 +55,14 @@ export function SessionLifecycleProvider({ children, onLifecycleEnded }) {
     const localSkew = Date.now() - serverNow;
     const warningDelay = Math.max(0, warningAt + localSkew - Date.now());
     const deadlineDelay = Math.max(0, idleExpiresAt + localSkew - Date.now());
-    warningTimerRef.current = setTimeout(() => setWarningVisible(true), warningDelay);
+    // setTimeout overflows past ~24.8 days and would fire at once; an owner
+    // session lasts 30 days (lib/sessionPolicy.cjs OWNER_TIMING). A far-off
+    // warning is left to a later validation; the deadline check is capped.
+    if (warningDelay <= MAX_TIMER_MS) warningTimerRef.current = setTimeout(() => setWarningVisible(true), warningDelay);
     // The timer only triggers a VALIDATION, never itself an expiry decision —
     // a suspended tab cannot run JS at the exact deadline anyway, so the real
     // enforcement is server-side; this just makes an awake tab check promptly.
-    deadlineTimerRef.current = setTimeout(() => { validate(); }, deadlineDelay);
+    deadlineTimerRef.current = setTimeout(() => { validate(); }, Math.min(deadlineDelay, MAX_TIMER_MS));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

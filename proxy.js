@@ -8,6 +8,7 @@ import attemptLimiter from '@/lib/attemptLimiter.cjs';
 import { sessions } from '@/lib/db';
 import credentials from '@/lib/sessionCredentials.cjs';
 import adminAccess from '@/lib/adminAccess.cjs';
+import { ownerEntryEnabled, ownerSessionFrom } from '@/lib/ownerEntry';
 
 const PUBLIC_PATHS = ['/hosgeldin', '/giris', '/api/access', '/admin-giris', '/api/admin-access', '/api/admin-login', '/api/admin-login/verify', '/api/health', '/giris-hatasi'];
 
@@ -80,6 +81,15 @@ function adminOriginatedLogin(req) {
 // Hygiene only: lib/session.js never reads this legacy cookie for
 // authorization, so leaving it is not a security issue by itself, but a
 // stale multi-hundred-day cookie serves no purpose once Session V2 is live.
+function ownerSessionActive(req) {
+  try {
+    const owner = ownerSessionFrom(req.cookies);
+    return Boolean(owner && sessions.check(owner.sessionId, owner.familyId).state === 'active');
+  } catch {
+    return false;
+  }
+}
+
 function clearLegacyGuestCookie(req, res) {
   if (req.cookies.get(LEGACY_GUEST_COOKIE)?.value) res.cookies.delete(LEGACY_GUEST_COOKIE);
 }
@@ -120,8 +130,11 @@ export async function proxy(req) {
 
   // Erişimi zaten olan kişi karşılama/kod ekranına (ör. telefonun "geri"siyle)
   // dönerse kodu yeniden sormak yerine uygulamaya al (QA-17).
+  // With owner entry the code also opens the owner's session, so the code
+  // screen stays reachable once that session has ended (e.g. after 30 days).
   if ((pathname === '/hosgeldin' || pathname === '/giris') &&
-      accessTokens.verifyAccessToken(req.cookies.get('access_ok')?.value, 'access')) {
+      accessTokens.verifyAccessToken(req.cookies.get('access_ok')?.value, 'access') &&
+      (!ownerEntryEnabled() || ownerSessionActive(req))) {
     const url = req.nextUrl.clone();
     url.pathname = '/';
     return NextResponse.redirect(url);
