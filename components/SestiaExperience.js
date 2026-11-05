@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { BackIcon, BoxIcon, CameraIcon, CloseIcon, GalleryIcon, GridIcon, SendIcon, StarIcon, ChevronRightIcon } from './icons';
+import { BackIcon, BoxIcon, CameraIcon, CloseIcon, GalleryIcon, GridIcon, SendIcon, StarIcon, FloorPlanIcon, ChevronRightIcon } from './icons';
 import { MAX_UPLOAD_BYTES } from '@/lib/constants';
 import chatComposerClient from '@/lib/chatComposerClient.cjs';
 
@@ -19,7 +19,7 @@ export function Header({ onBack, onAccount }) {
 
 export function MainNavigation({ view, onNavigate }) {
   return <nav className="sestia-nav" aria-label="Ana gezinme">{[
-    ['home', 'Ana sayfa', GridIcon], ['discover', 'Keşif', StarIcon], ['rooms', 'Odalarım', BoxIcon], ['chat', 'Sestia', SendIcon],
+    ['home', 'Ana sayfa', GridIcon], ['floor-plan', 'Oda Planı', FloorPlanIcon], ['discover', 'Keşif', StarIcon], ['rooms', 'Odalarım', BoxIcon], ['chat', 'Sestia', SendIcon],
   ].map(([id, label, Icon]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => onNavigate(id)}><Icon /><span>{label}</span></button>)}</nav>;
 }
 

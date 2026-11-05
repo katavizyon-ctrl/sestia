@@ -366,7 +366,7 @@ function PageInner() {
     }
     if (name === 'inspiration') loadInspiration();
     if (name === 'account') setAccountEmailFlow(false);
-    if (name === 'rooms') { activeRoomRef.current = null; loadRooms(); }
+    if (name === 'rooms' || name === 'floor-plan') { activeRoomRef.current = null; loadRooms(); }
     setView(name);
   }
 
@@ -1778,7 +1778,7 @@ function PageInner() {
   }
 
   const displayName = identityType === 'account' ? homeState.name : userName;
-  const mainSurface = ['home', 'discover', 'rooms', 'chat'].includes(view);
+  const mainSurface = ['home', 'floor-plan', 'discover', 'rooms', 'chat'].includes(view);
   if (!identityLoaded) return <div className="app"><div className="scroll sestia-onboarding"><Brand/><p role="status" className="muted">Birlikte başlıyoruz…</p></div></div>;
   if (signInRequired) return <div className="app" data-screen="sign-in"><WelcomeView emailOnly emailReady={signInRequired.emailReady} currentIdentityId={null} onGuestStart={() => {}} /></div>;
   // Session V2: a brand-new visitor (or the remounted app right after a
@@ -1821,6 +1821,17 @@ function PageInner() {
           onBack={() => goTo('home')}
           onOpenRoom={openRoom}
           onCreateRoom={createRoomAndOpen}
+        />
+      )}
+
+      {view === 'floor-plan' && (
+        <FloorPlanRoomsView
+          rooms={rooms}
+          loading={roomsLoading}
+          error={roomsError}
+          onBack={() => goTo('home')}
+          onOpenRoom={(roomId) => { window.location.assign(`/rooms/${encodeURIComponent(roomId)}/blueprint`); }}
+          onGoRooms={() => goTo('rooms')}
         />
       )}
 
@@ -2345,6 +2356,22 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
     <form className="sestia-room-create" onSubmit={submit}><label htmlFor="new-room">Yeni oda adı</label><input id="new-room" maxLength={60} value={name} onChange={e=>setName(e.target.value)} disabled={creating} placeholder="Örneğin: Salon"/><button className="btn-primary" disabled={creating||!name.trim()}>{creating?'Odan oluşturuluyor…':'Oda ekle'}<ChevronRightIcon/></button></form>
   </div></section>;
 }
+// "Oda Planı": pick a room, then its measured blueprint opens on its own page.
+function FloorPlanRoomsView({ rooms, loading, error, onBack, onOpenRoom, onGoRooms }) {
+  return <section className="view"><div className="scroll">
+    <Header onBack={onBack}/>
+    <PageHeading title="Oda Planı">Hangi odanın planı üzerinde çalışmak istersin?</PageHeading>
+    {loading && <p role="status" className="muted">Odaların yükleniyor…</p>}
+    {error && <div role="alert" className="errbox">{error}</div>}
+    {!loading && !error && rooms.length === 0 && <div className="sestia-empty"><GridIcon/><h3>Henüz kayıtlı odan yok.</h3><p>Plan çizmek için önce bir oda ekle.</p></div>}
+    <div className="sestia-room-list">
+      {rooms.map(room => <button key={room.id} className="sestia-photo-card" onClick={() => onOpenRoom(room.id)}>
+        <RoomCover room={room}/><div><h2>{room.name}</h2><p>Oda planını aç →</p></div>
+      </button>)}
+    </div>
+    <button className="btn-outline" onClick={onGoRooms}>{rooms.length ? 'Odalarımı yönet' : 'Oda ekle'}</button>
+  </div></section>;
+}
 function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo, onSaveGoal, onDeletePhoto }) {
   const [editingGoal, setEditingGoal] = useState(false);
   return (
@@ -2418,6 +2445,10 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
                 <button className="btn-primary" onClick={onResumeScan}>Taramaya Devam Et</button>
               </div>
             )}
+
+            <a href={`/rooms/${room.id}/blueprint`} className="btn-outline" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', padding: '13px 16px', marginBottom: 14 }}>
+              Oda planını aç
+            </a>
 
             <CaptureButtons
               onFile={onAddPhoto}

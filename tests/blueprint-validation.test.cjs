@@ -1,0 +1,12 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { validBlueprint } = require('../lib/blueprintValidation.cjs');
+const sample = () => ({ walls: [{ id: 1, a: { x: 0, y: 0 }, b: { x: 200, y: 0 }, thickness: 12 }], openings: [{ id: 2, wall: 1, t: 0.5, type: 'window', width: 90 }], next: 3 });
+test('valid blueprint', () => assert.equal(validBlueprint(sample()), true));
+test('empty blueprint', () => assert.equal(validBlueprint({ walls: [], openings: [], next: 1 }), true));
+test('reject unowned opening wall', () => { const m = sample(); m.openings[0].wall = 99; assert.equal(validBlueprint(m), false); });
+test('reject NaN and Infinity', () => { const m = sample(); m.walls[0].a.x = Infinity; assert.equal(validBlueprint(m), false); });
+test('reject duplicate IDs', () => { const m = sample(); m.openings[0].id = 1; assert.equal(validBlueprint(m), false); });
+test('reject invalid sizes', () => { const m = sample(); m.openings[0].width = -2; assert.equal(validBlueprint(m), false); });
+test('reject unknown type', () => { const m = sample(); m.openings[0].type = 'unknown'; assert.equal(validBlueprint(m), false); });
+test('reject stale next ID', () => { const m = sample(); m.next = 2; assert.equal(validBlueprint(m), false); });
