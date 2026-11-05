@@ -22,13 +22,14 @@ export default function BlueprintClient({ roomId }) {
   useEffect(() => {
     let mounted = true;
     let loaded = null; // the model from the server, once fetched
+    let roomPhotos = []; // P2: this room's photos, to place on the plan
     let ready = false; // the editor said it is listening
     let pending = null; // newest unsaved model
     let saving = false;
     let timer = null;
     const url = `/api/rooms/${encodeURIComponent(roomId)}/blueprint`;
     const post = (payload) => frame.current?.contentWindow?.postMessage(payload, location.origin);
-    const initialize = () => { if (ready && loaded) post({ type: 'sestia:blueprint:load', model: loaded }); };
+    const initialize = () => { if (ready && loaded) post({ type: 'sestia:blueprint:load', model: loaded, photos: roomPhotos }); };
     const put = (model, extra) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }), ...extra });
 
     async function load() {
@@ -38,6 +39,7 @@ export default function BlueprintClient({ roomId }) {
         const data = await response.json();
         if (!mounted) return;
         loaded = data.model;
+        roomPhotos = (data.roomPhotos || []).map((id) => ({ id, url: `/api/rooms/${encodeURIComponent(roomId)}/photos/${id}` }));
         setStatus(data.updatedAt ? 'Kayıtlı plan yüklendi.' : 'Yeni plan hazır.');
         setShowEditor(true);
         initialize();

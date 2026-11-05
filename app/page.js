@@ -2360,10 +2360,15 @@ function RoomsListView({ rooms, loading, error, creating, onBack, onOpenRoom, on
 }
 // The room's saved plan, drawn read-only to fit its card: walls at their real
 // thickness, doors (with swing) and windows on their walls, and the room's
-// overall width × depth. Units are centimetres, as in the editor.
-function FloorPlanPreview({ plan }) {
+// overall width × depth. Units are centimetres, as in the editor. P2: photos
+// placed on the plan show as numbered markers facing their direction (numbers
+// follow the room's photo order, as in the editor); tapping one calls
+// onOpenPhoto with that photo's id.
+const PLAN_CONE = 110, PLAN_HALF_FOV = 30;
+function FloorPlanPreview({ plan, photoOrder = [], onOpenPhoto }) {
   const walls = plan.walls || [];
-  const points = walls.flatMap((w) => [w.a, w.b]);
+  const markers = plan.photos || [];
+  const points = [...walls.flatMap((w) => [w.a, w.b]), ...markers.map((m) => ({ x: m.x, y: m.y }))];
   const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
   const width = maxX - minX, depth = maxY - minY;
@@ -2396,9 +2401,23 @@ function FloorPlanPreview({ plan }) {
             </g>
           );
         })}
+        {markers.map((m) => {
+          const n = photoOrder.indexOf(m.photoId) + 1;
+          const r = PLAN_HALF_FOV * Math.PI / 180, cx = PLAN_CONE * Math.cos(r), cy = PLAN_CONE * Math.sin(r);
+          const open = () => onOpenPhoto?.(m.photoId);
+          return (
+            <g key={m.id} transform={`translate(${m.x} ${m.y}) rotate(${m.angle})`} role="button" tabIndex={0}
+              aria-label={`Fotoğraf ${n || ''} — aç`} style={{ cursor: 'pointer' }}
+              onClick={open} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}>
+              <path d={`M 0 0 L ${cx} ${-cy} A ${PLAN_CONE} ${PLAN_CONE} 0 0 1 ${cx} ${cy} Z`} fill="var(--slate)" fillOpacity={0.22} stroke="var(--slate)" strokeWidth={2} />
+              <circle r={16} fill="var(--slate)" stroke="var(--surface-alt)" strokeWidth={3} />
+              <text y={5} textAnchor="middle" fontSize={15} fontWeight={700} fill="var(--on-accent)" transform={`rotate(${-m.angle})`}>{n || '?'}</text>
+            </g>
+          );
+        })}
       </svg>
       <div className="muted" style={{ fontSize: 12.5, textAlign: 'center', marginTop: 4 }}>
-        {metres(width)} × {metres(depth)} m · {walls.length} duvar · {(plan.openings || []).length} açıklık
+        {metres(width)} × {metres(depth)} m · {walls.length} duvar · {(plan.openings || []).length} açıklık{markers.length ? ` · ${markers.length} fotoğraf` : ''}
       </div>
     </div>
   );
@@ -2422,7 +2441,23 @@ function FloorPlanRoomsView({ rooms, loading, error, onBack, onOpenRoom, onGoRoo
 }
 function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, onRetryPhoto, onScanHere, onRoomScanHere, onToparlaHere, onSuggestHere, toparlaNotice, onResumeScan, onViewAnalysis, onViewSuggestion, onToggleTodo, onRemoveTodo, onOpenTodo, onSaveGoal, onDeletePhoto }) {
   const [editingGoal, setEditingGoal] = useState(false);
+  const [planPhoto, setPlanPhoto] = useState(null); // a photo opened from its plan marker
+  useEffect(() => {
+    if (!planPhoto) return;
+    const close = (e) => { if (e.key === 'Escape') setPlanPhoto(null); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [planPhoto]);
   return (
+    <>
+    {planPhoto && room && (
+      <div role="dialog" aria-modal="true" aria-label={`Fotoğraf ${room.photos.findIndex((p) => p.id === planPhoto) + 1}`} onClick={() => setPlanPhoto(null)}
+        style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(20, 24, 22, 0.86)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <img src={`/api/rooms/${room.id}/photos/${planPhoto}`} alt="" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 14, objectFit: 'contain' }} />
+        <button type="button" className="iconbtn" aria-label="Kapat" onClick={() => setPlanPhoto(null)}
+          style={{ position: 'absolute', top: 16, right: 16, background: 'var(--surface)' }}><CloseIcon /></button>
+      </div>
+    )}
     <section className="view">
       <div className="scroll sestia-room-detail">
         <div className="topbar">
@@ -2495,12 +2530,12 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
             )}
 
             {room.blueprint ? (
-              <a href={`/rooms/${room.id}/blueprint`} className="card sestia-plan-card" aria-label="Oda planını düzenle"
-                style={{ display: 'flex', flexDirection: 'column', gap: 8, textDecoration: 'none', color: 'inherit', marginBottom: 14 }}>
+              <div className="card sestia-plan-card" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
                 <div className="label" style={{ color: 'var(--text-muted)' }}>Oda planı</div>
-                <FloorPlanPreview plan={room.blueprint} />
-                <span className="sestia-text-link" style={{ alignSelf: 'flex-start' }}>Planı düzenle →</span>
-              </a>
+                <FloorPlanPreview plan={room.blueprint} photoOrder={room.photos.map((p) => p.id)} onOpenPhoto={setPlanPhoto} />
+                {room.blueprint.photos?.length > 0 && <div className="muted" style={{ fontSize: 12.5 }}>Fotoğrafı görmek için plandaki numaraya dokun.</div>}
+                <a href={`/rooms/${room.id}/blueprint`} className="sestia-text-link" style={{ alignSelf: 'flex-start' }}>Planı düzenle →</a>
+              </div>
             ) : (
               <a href={`/rooms/${room.id}/blueprint`} className="btn-outline" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', padding: '13px 16px', marginBottom: 14 }}>
                 Oda planını çiz
@@ -2633,6 +2668,7 @@ function RoomDetailView({ room, loading, error, uploading, onBack, onAddPhoto, o
         )}
       </div>
     </section>
+    </>
   );
 }
 
