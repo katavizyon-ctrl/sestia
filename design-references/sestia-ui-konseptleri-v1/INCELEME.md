@@ -24,97 +24,97 @@ Ana sayfada sohbet girişi, ayrı sohbet sayfası ve sohbet içinde görsel fiki
 
 | # | Ekran | Mevcut karşılığı / öneri |
 |---|---|---|
-| 1 | [Keşif / ilk kullanım](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/01-kesif.png) | KesifView |
-| 2 | [Ana sayfa / geri dönen kullanıcı](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/02-ana-sayfa.png) | HomeView — sohbet girişi yeni düzen önerisi |
-| 3 | [Sestia ile sohbet](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/03-sohbet.png) | KesifView sohbeti — ayrı ekran ve görsel fikir kartı önerisi |
-| 4 | [Hesap / giriş yöntemi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/04-hesap.png) | WelcomeView / account |
-| 5 | [Odalarım](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/05-odalarim.png) | RoomsListView |
-| 6 | [Oda detayı](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/06-oda-detay.png) | RoomDetailView |
-| 7 | [Tek fotoğraf ekleme](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/07-fotograf.png) | ScanView |
-| 8 | [Oda fotoğrafları](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/08-oda-fotograflari.png) | RoomScanView |
-| 9 | [Eşya değerlendirmesi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/09-esya-degerlendirme.png) | DecisionView |
-| 10 | [Oda değerlendirmesi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/10-oda-degerlendirme.png) | RoomReviewView |
-| 11 | [Geçmiş analiz / salt okunur](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/11-analiz-gecmisi.png) | room-analysis / RoomReviewView salt okunur |
-| 12 | [Haftalık ilham](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/12-ilham.png) | InspirationView |
-| 13 | [Karar kaydedildi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/13-tamamlandi.png) | CelebrationView |
-| 14 | [Davet kodu / erişim](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/14-erisim.png) | /giris |
-| 15 | [Geri bildirim paneli](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/15-geri-bildirim.png) | FeedbackButton paneli |
-| 16 | [Hata / yeniden deneme](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/16-hata.png) | /error |
-| 17 | [Yönetici girişi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/17-yonetici-giris.png) | /admin-giris |
-| 18 | [Yönetici paneli](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/18-yonetici-paneli.png) | /admin |
+| 1 | [Keşif / ilk kullanım](01-kesif.png) | KesifView |
+| 2 | [Ana sayfa / geri dönen kullanıcı](02-ana-sayfa.png) | HomeView — sohbet girişi yeni düzen önerisi |
+| 3 | [Sestia ile sohbet](03-sohbet.png) | KesifView sohbeti — ayrı ekran ve görsel fikir kartı önerisi |
+| 4 | [Hesap / giriş yöntemi](04-hesap.png) | WelcomeView / account |
+| 5 | [Odalarım](05-odalarim.png) | RoomsListView |
+| 6 | [Oda detayı](06-oda-detay.png) | RoomDetailView |
+| 7 | [Tek fotoğraf ekleme](07-fotograf.png) | ScanView |
+| 8 | [Oda fotoğrafları](08-oda-fotograflari.png) | RoomScanView |
+| 9 | [Eşya değerlendirmesi](09-esya-degerlendirme.png) | DecisionView |
+| 10 | [Oda değerlendirmesi](10-oda-degerlendirme.png) | RoomReviewView |
+| 11 | [Geçmiş analiz / salt okunur](11-analiz-gecmisi.png) | room-analysis / RoomReviewView salt okunur |
+| 12 | [Haftalık ilham](12-ilham.png) | InspirationView |
+| 13 | [Karar kaydedildi](13-tamamlandi.png) | CelebrationView |
+| 14 | [Davet kodu / erişim](14-erisim.png) | /giris |
+| 15 | [Geri bildirim paneli](15-geri-bildirim.png) | FeedbackButton paneli |
+| 16 | [Hata / yeniden deneme](16-hata.png) | /error |
+| 17 | [Yönetici girişi](17-yonetici-giris.png) | /admin-giris |
+| 18 | [Yönetici paneli](18-yonetici-paneli.png) | /admin |
 
 ## Görsel galeri
 
 ### Keşif / ilk kullanım
 
-![Keşif / ilk kullanım](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/01-kesif.png)
+![Keşif / ilk kullanım](01-kesif.png)
 
 ### Ana sayfa / geri dönen kullanıcı
 
-![Ana sayfa / geri dönen kullanıcı](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/02-ana-sayfa.png)
+![Ana sayfa / geri dönen kullanıcı](02-ana-sayfa.png)
 
 ### Sestia ile sohbet
 
-![Sestia ile sohbet](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/03-sohbet.png)
+![Sestia ile sohbet](03-sohbet.png)
 
 ### Hesap / giriş yöntemi
 
-![Hesap / giriş yöntemi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/04-hesap.png)
+![Hesap / giriş yöntemi](04-hesap.png)
 
 ### Odalarım
 
-![Odalarım](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/05-odalarim.png)
+![Odalarım](05-odalarim.png)
 
 ### Oda detayı
 
-![Oda detayı](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/06-oda-detay.png)
+![Oda detayı](06-oda-detay.png)
 
 ### Tek fotoğraf ekleme
 
-![Tek fotoğraf ekleme](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/07-fotograf.png)
+![Tek fotoğraf ekleme](07-fotograf.png)
 
 ### Oda fotoğrafları
 
-![Oda fotoğrafları](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/08-oda-fotograflari.png)
+![Oda fotoğrafları](08-oda-fotograflari.png)
 
 ### Eşya değerlendirmesi
 
-![Eşya değerlendirmesi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/09-esya-degerlendirme.png)
+![Eşya değerlendirmesi](09-esya-degerlendirme.png)
 
 ### Oda değerlendirmesi
 
-![Oda değerlendirmesi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/10-oda-degerlendirme.png)
+![Oda değerlendirmesi](10-oda-degerlendirme.png)
 
 ### Geçmiş analiz / salt okunur
 
-![Geçmiş analiz / salt okunur](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/11-analiz-gecmisi.png)
+![Geçmiş analiz / salt okunur](11-analiz-gecmisi.png)
 
 ### Haftalık ilham
 
-![Haftalık ilham](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/12-ilham.png)
+![Haftalık ilham](12-ilham.png)
 
 ### Karar kaydedildi
 
-![Karar kaydedildi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/13-tamamlandi.png)
+![Karar kaydedildi](13-tamamlandi.png)
 
 ### Davet kodu / erişim
 
-![Davet kodu / erişim](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/14-erisim.png)
+![Davet kodu / erişim](14-erisim.png)
 
 ### Geri bildirim paneli
 
-![Geri bildirim paneli](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/15-geri-bildirim.png)
+![Geri bildirim paneli](15-geri-bildirim.png)
 
 ### Hata / yeniden deneme
 
-![Hata / yeniden deneme](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/16-hata.png)
+![Hata / yeniden deneme](16-hata.png)
 
 ### Yönetici girişi
 
-![Yönetici girişi](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/17-yonetici-giris.png)
+![Yönetici girişi](17-yonetici-giris.png)
 
 ### Yönetici paneli
 
-![Yönetici paneli](C:/projects/SESTIA/design-references/sestia-ui-konseptleri-v1/18-yonetici-paneli.png)
+![Yönetici paneli](18-yonetici-paneli.png)
 
 
